@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: #09090B;
+  --color-foreground: #FAFAFA;
+  --color-card: #18181B;
+  --color-card-border: #27272A;
+  --color-primary: #C8102E;
+  --color-primary-glow: #F97316;
+  --color-enyata: #2563EB;
+}
+
+@layer base {
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    @apply antialiased selection:bg-red-500/30 selection:text-red-100;
+  }
+}
