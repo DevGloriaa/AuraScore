@@ -43,10 +43,10 @@ public class InterswitchService {
     @Value("${interswitch.token.url:https://qa.interswitchng.com/passport/oauth/token}")
     private String tokenUrl;
 
-    @Value("${interswitch.client.id:sandbox_id}")
+    @Value("${interswitch.client.id}")
     private String clientId;
 
-    @Value("${interswitch.client.secret:sandbox_secret}")
+    @Value("${interswitch.client.secret}")
     private String clientSecret;
 
     private volatile String cachedToken;
