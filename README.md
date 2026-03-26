@@ -14,7 +14,7 @@ Millions of individuals and rising entrepreneurs lack access to fair credit beca
 
 ---
 
-## 🚀 The Core Innovation: The "God Endpoint"
+## 🚀 The Core Innovation
 Our backend orchestrates a complex financial and cryptographic pipeline in under 20 seconds using a single API call:
 
 1. **Open Banking Aggregation:** We integrate with the **Mono API** to securely exchange user consent tokens for live, read-only bank transaction history.
