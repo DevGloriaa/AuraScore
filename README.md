@@ -45,8 +45,6 @@ This project was built entirely by a 2-person team. As per hackathon requirement
 * 👩‍💻 **Gloria Obiorah (Team Lead)**
   * **Backend Architecture:** Built the core Spring Boot application and REST APIs.
   * **Web3 Integration:** Deployed the Smart Contract and built the Web3j Java integration to mint scores on the Sepolia blockchain.
-  * **AI Engineering:** Designed the system prompt and integrated the Gemini 2.5 Flash model to parse JSON banking data into logical credit scores.
-  * **API Orchestration:** Connected the Mono API payload directly to the AI and Blockchain layers (The "God Endpoint").
 
 * 🎨 **Treasure Ehiomhen**
   * **UI/UX Design:** Designed the user interfaces, user flows, and overall product experience.
