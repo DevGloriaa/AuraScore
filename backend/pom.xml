@@ -121,6 +121,11 @@
             <artifactId>core</artifactId>
             <version>4.10.3</version>
         </dependency>
+        <dependency>
+            <groupId>com.google.cloud</groupId>
+            <artifactId>google-cloud-vertexai</artifactId>
+            <version>1.18.0</version>
+        </dependency>
 
         <dependency>
             <groupId>org.springframework.boot</groupId>

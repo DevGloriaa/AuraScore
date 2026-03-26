@@ -20,17 +20,14 @@ public class WalletService {
 
     private final InterswitchService interswitchService;
     private final ObjectMapper objectMapper;
-
     private final String contractAddress;
     private final long chainId;
 
     public WalletService(
             InterswitchService interswitchService,
             ObjectMapper objectMapper,
-            @org.springframework.beans.factory.annotation.Value("${web3.contract.address:${AURA_SCORE_CONTRACT_ADDRESS:0x0000000000000000000000000000000000000000}}")
-            String contractAddress,
-            @org.springframework.beans.factory.annotation.Value("${web3.chain.id:${AURA_CHAIN_ID:11155111}}")
-            long chainId
+            @org.springframework.beans.factory.annotation.Value("${web3.contract.address:0x0000000000000000000000000000000000000000}") String contractAddress,
+            @org.springframework.beans.factory.annotation.Value("${web3.chain.id:11155111}") long chainId
     ) {
         this.interswitchService = interswitchService;
         this.objectMapper = objectMapper;
@@ -38,18 +35,11 @@ public class WalletService {
         this.chainId = chainId;
     }
 
-    public String generateHiddenWalletAddress(String phoneNumber) {
-        String normalizedPhone = normalizePhoneNumber(phoneNumber);
-        ensureKycSuccess(normalizedPhone);
+    public MintTransaction prepareMinting(String walletAddress, int score, String accountNumber, String bankCode) {
 
-        byte[] hash = Hash.sha3(normalizedPhone.getBytes(StandardCharsets.UTF_8));
-        byte[] addressBytes = Arrays.copyOfRange(hash, hash.length - 20, hash.length);
+        ensureBankIdentityVerified(accountNumber, bankCode);
 
-        String addressHex = Numeric.toHexStringNoPrefix(addressBytes);
-        return "0x" + leftPad40(addressHex);
-    }
 
-    public MintTransaction mintAuraScore(String walletAddress, int score) {
         if (!ETH_ADDRESS_PATTERN.matcher(walletAddress).matches()) {
             throw new IllegalArgumentException("Invalid Ethereum wallet address format");
         }
@@ -57,6 +47,7 @@ public class WalletService {
             throw new IllegalArgumentException("Score must be non-negative");
         }
 
+        // 3. ENCODE BLOCKCHAIN DATA
         String normalizedWallet = normalizeWalletAddress(walletAddress);
         String selector = first4BytesHex("mintAuraScore(address,uint256)");
         String encodedAddress = leftPad64(normalizedWallet.substring(2));
@@ -75,77 +66,38 @@ public class WalletService {
         );
     }
 
-    private void ensureKycSuccess(String phoneNumber) {
+    private void ensureBankIdentityVerified(String accountNumber, String bankCode) {
         try {
-            String kycJson = interswitchService.verifyKYC(phoneNumber);
-            JsonNode root = objectMapper.readTree(kycJson);
-            String status = root.path("verificationStatus").asText(root.path("status").asText(""));
+            String responseJson = interswitchService.verifyBankAccount(accountNumber, bankCode);
+            JsonNode root = objectMapper.readTree(responseJson);
 
-            if (!"SUCCESS".equalsIgnoreCase(status)) {
-                throw new IllegalStateException("KYC verification did not return SUCCESS");
+            // Interswitch Name Enquiry usually returns "00" for success
+            String responseCode = root.path("responseCode").asText("");
+
+            if (!"00".equals(responseCode) && !"SUCCESS".equalsIgnoreCase(responseCode)) {
+                throw new IllegalStateException("Identity verification failed. Account not found or mismatched.");
             }
-        } catch (IllegalStateException ex) {
-            throw ex;
         } catch (Exception ex) {
-            throw new IllegalStateException("Failed to verify KYC before wallet generation", ex);
+            throw new IllegalStateException("Identity check failed before minting: " + ex.getMessage());
         }
-    }
-
-    private String normalizePhoneNumber(String phoneNumber) {
-        if (phoneNumber == null || phoneNumber.isBlank()) {
-            throw new IllegalArgumentException("phoneNumber is required");
-        }
-        return phoneNumber.replaceAll("\\s+", "");
     }
 
     private String normalizeWalletAddress(String address) {
-        if (address == null || address.isBlank()) {
-            throw new IllegalArgumentException("walletAddress is required");
-        }
-        String normalized = address.startsWith("0x") || address.startsWith("0X")
-                ? address.substring(2)
-                : address;
-        if (normalized.length() != 40 || !normalized.matches("[0-9a-fA-F]{40}")) {
-            throw new IllegalArgumentException("Invalid Ethereum wallet address format");
-        }
+        String normalized = address.startsWith("0x") || address.startsWith("0X") ? address.substring(2) : address;
         return "0x" + normalized.toLowerCase(Locale.ROOT);
     }
 
     private String first4BytesHex(String functionSignature) {
-        byte[] digest = keccak256(functionSignature.getBytes(StandardCharsets.UTF_8));
+        byte[] digest = Hash.sha3(functionSignature.getBytes(StandardCharsets.UTF_8));
         return Numeric.toHexStringNoPrefix(Arrays.copyOfRange(digest, 0, 4));
     }
 
-    private String leftPad40(String hexValue) {
-        String clean = hexValue == null ? "" : hexValue;
-        if (clean.length() >= 40) {
-            return clean.substring(clean.length() - 40);
-        }
-        return "0".repeat(40 - clean.length()) + clean;
-    }
-
     private String leftPad64(String hexValue) {
-        String clean = hexValue == null ? "" : hexValue;
-        if (clean.length() > 64) {
-            throw new IllegalArgumentException("Encoded value exceeds 32 bytes");
-        }
-        return "0".repeat(64 - clean.length()) + clean;
-    }
-
-    private byte[] keccak256(byte[] input) {
-        return Hash.sha3(input);
+        return "0".repeat(Math.max(0, 64 - hexValue.length())) + hexValue;
     }
 
     public record MintTransaction(
-            long chainId,
-            String to,
-            String beneficiaryWallet,
-            int score,
-            String value,
-            String gasLimit,
-            String data,
-            LocalDateTime preparedAt
-    ) {
-    }
+            long chainId, String to, String beneficiaryWallet, int score,
+            String value, String gasLimit, String data, LocalDateTime preparedAt
+    ) {}
 }
-

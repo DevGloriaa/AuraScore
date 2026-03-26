@@ -1,119 +1,80 @@
 package com.enyata.aurascore.service;
 
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.web.client.RestTemplateBuilder;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
+import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
+
+import java.util.Map;
 
 @Service
 public class GeminiService {
 
-    private static final String FALLBACK_RESPONSE =
-            "{\"score\":500,\"insights\":\"Mock: external AI unavailable, fallback score applied.\"}";
-
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
+    private final String googleApiKey;
+    private final String endpoint;
 
-    @Value("${gemini.api.key}")
-    private String geminiApiKey;
+    private static final String SYSTEM_PROMPT = """
+            You are the Aura Credit Officer. Analyze these Nigerian bank transactions.
+            Return ONLY a valid JSON object with:
+            - auraScore (Integer 300-850)
+            - summary (Short 2-sentence personality profile)
+            - category (e.g., 'Rising Entrepreneur', 'Steady Professional', 'High Risk')
+            """;
 
-    @Value("${gemini.api.url}")
-    private String geminiApiUrl;
-
-    public GeminiService(ObjectMapper objectMapper, RestTemplateBuilder restTemplateBuilder) {
+    public GeminiService(
+            ObjectMapper objectMapper,
+            @Value("${GOOGLE_API_KEY}") String googleApiKey
+    ) {
         this.objectMapper = objectMapper;
-        this.restTemplate = restTemplateBuilder
-                .requestFactory(() -> {
-                    SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-                    factory.setConnectTimeout(10_000);
-                    factory.setReadTimeout(10_000);
-                    return factory;
-                })
-                .build();
+        this.restTemplate = new RestTemplate();
+        this.googleApiKey = googleApiKey;
+        this.endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + googleApiKey;
+        System.out.println("✅ AuraScore Gemini Service Initialized with key: " + (googleApiKey != null ? "FOUND" : "MISSING"));
     }
 
-    public String analyzeTransactions(String transactionData) {
-        try {
-            String prompt = "You are an expert FinTech AI. Analyze this user's Interswitch transaction history: "
-                    + transactionData
-                    + ". Generate a Web3 credit score between 300 and 850. Return ONLY a valid JSON object with exactly two keys: 'score' (integer) and 'insights' (a short 1-sentence reason based on the data). Do not use markdown blocks.";
+    public JsonNode analyzeAura(JsonNode transactions) throws Exception {
+        String payload = objectMapper.writeValueAsString(transactions);
+        String fullPrompt = SYSTEM_PROMPT + "\n\nTransactions:\n" + payload;
 
-            Map<String, Object> textPart = new HashMap<>();
-            textPart.put("text", prompt);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
 
-            Map<String, Object> content = new HashMap<>();
-            content.put("parts", List.of(textPart));
+        String requestBody = """
+                {
+                  "contents": [
+                    {
+                      "parts": [
+                        {"text": "%s"}
+                      ]
+                    }
+                  ]
+                }
+                """.formatted(fullPrompt.replace("\"", "\\\"").replace("\n", "\\n"));
 
-            Map<String, Object> generationConfig = new HashMap<>();
-            generationConfig.put("temperature", 0.2);
+        HttpEntity<String> request = new HttpEntity<>(requestBody, headers);
 
-            Map<String, Object> payload = new HashMap<>();
-            payload.put("contents", List.of(content));
-            payload.put("generationConfig", generationConfig);
+        System.out.println("🚀 Sending transactions to Gemini...");
+        ResponseEntity<JsonNode> response = restTemplate.postForEntity(endpoint, request, JsonNode.class);
 
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
+        if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+            String aiText = response.getBody()
+                    .path("candidates").get(0)
+                    .path("content").path("parts").get(0)
+                    .path("text").asText();
 
-            HttpEntity<Map<String, Object>> requestEntity = new HttpEntity<>(payload, headers);
-            String endpoint = buildEndpoint(geminiApiUrl, geminiApiKey);
-
-            ResponseEntity<String> response = restTemplate.postForEntity(endpoint, requestEntity, String.class);
-            if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
-                return FALLBACK_RESPONSE;
-            }
-
-            JsonNode root = objectMapper.readTree(response.getBody());
-            String modelText = root.path("candidates")
-                    .path(0)
-                    .path("content")
-                    .path("parts")
-                    .path(0)
-                    .path("text")
-                    .asText();
-
-            if (modelText == null || modelText.isBlank()) {
-                return FALLBACK_RESPONSE;
-            }
-
-            // Gemini can still wrap JSON in fences occasionally; sanitize before returning.
-            String cleaned = modelText.replace("```json", "")
-                    .replace("```", "")
-                    .trim();
-
-            JsonNode candidateJson = objectMapper.readTree(cleaned);
-            int score = candidateJson.path("score").asInt(500);
-            String insights = candidateJson.path("insights")
-                    .asText("Mock: external AI unavailable, fallback score applied.");
-
-            Map<String, Object> normalized = new HashMap<>();
-            normalized.put("score", score);
-            normalized.put("insights", insights);
-            return objectMapper.writeValueAsString(normalized);
-        } catch (Exception ex) {
-            return FALLBACK_RESPONSE;
+            System.out.println("Gemini Analysis Received!");
+            return normalizeAuraJson(aiText);
         }
+
+        throw new RuntimeException("Gemini API call failed with status: " + response.getStatusCode());
     }
 
-    public String analyze(String transactionHistory) {
-        return analyzeTransactions(transactionHistory);
-    }
-
-    private String buildEndpoint(String apiUrl, String apiKey) {
-        if (apiUrl.contains("?")) {
-            return apiUrl + "&key=" + apiKey;
-        }
-        return apiUrl + "?key=" + apiKey;
+    private JsonNode normalizeAuraJson(String aiText) throws Exception {
+        String cleaned = aiText.replaceAll("```json", "").replaceAll("```", "").trim();
+        return objectMapper.readTree(cleaned);
     }
 }
-
