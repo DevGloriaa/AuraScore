@@ -1,18 +1,15 @@
 package com.enyata.aurascore.controller;
 
-import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-import com.enyata.aurascore.model.UserScore;
-import com.enyata.aurascore.repository.UserScoreRepository;
 import com.enyata.aurascore.service.GeminiService;
-import com.enyata.aurascore.service.InterswitchService;
-import com.enyata.aurascore.service.WalletService;
+import com.enyata.aurascore.service.MonoService;
+import com.enyata.aurascore.service.Web3Service;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -23,70 +20,60 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/score")
 public class AuraScoreController {
 
+    private final MonoService monoService;
     private final GeminiService geminiService;
-    private final InterswitchService interswitchService;
-    private final WalletService walletService;
-    private final UserScoreRepository userScoreRepository;
-    private final ObjectMapper objectMapper;
+    private final Web3Service web3Service;
 
-    public AuraScoreController(
-            GeminiService geminiService,
-            InterswitchService interswitchService,
-            WalletService walletService,
-            UserScoreRepository userScoreRepository,
-            ObjectMapper objectMapper
-    ) {
+    public AuraScoreController(MonoService monoService, GeminiService geminiService, Web3Service web3Service) {
+        this.monoService = monoService;
         this.geminiService = geminiService;
-        this.interswitchService = interswitchService;
-        this.walletService = walletService;
-        this.userScoreRepository = userScoreRepository;
-        this.objectMapper = objectMapper;
+        this.web3Service = web3Service;
     }
 
-    @PostMapping("/calculate")
-    public ResponseEntity<?> calculateScore(@Valid @RequestBody CalculateScoreRequest request) {
+    @PostMapping("/generate")
+    public ResponseEntity<?> generateScore(@Valid @RequestBody GenerateScoreRequest request) {
         try {
-            String kycJson = interswitchService.verifyKYC(request.phoneNumber());
-            JsonNode kycNode = objectMapper.readTree(kycJson);
-            String kycStatus = kycNode.path("verificationStatus").asText("");
-            if (!"SUCCESS".equalsIgnoreCase(kycStatus)) {
-                throw new IllegalStateException("KYC verification failed for provided phone number");
-            }
+            System.out.println("INITIATING ONE-CLICK AURA SCORE GENERATION AND MINTING");
 
-            String transactionHistoryJson = interswitchService.getTransactionHistory(request.phoneNumber());
-            String aiJson = geminiService.analyze(transactionHistoryJson);
+            System.out.println("Exchanging Mono code for Account ID...");
+            String accountId = monoService.exchangeToken(request.code());
 
-            int score = 500;
-            String insights = "Mock: external AI unavailable, fallback score applied.";
+            System.out.println("Fetching transactions for Account: " + accountId);
+            JsonNode financialData = monoService.getTransactions(accountId);
 
-            JsonNode aiNode = objectMapper.readTree(aiJson);
-            score = aiNode.path("score").asInt(score);
-            insights = aiNode.path("insights").asText(insights);
+            System.out.println("Handing transactions to Gemini AI...");
+            JsonNode aiNode = geminiService.analyzeAura(financialData);
+            int finalScore = aiNode.path("auraScore").asInt();
 
-            String walletAddress = walletService.generateHiddenWalletAddress(request.phoneNumber());
+            System.out.println("Minting score to blockchain for wallet: " + request.walletAddress());
+            String txHash = web3Service.mintSbtScore(request.walletAddress(), finalScore);
 
-            UserScore userScore = new UserScore(
-                    null,
-                    request.phoneNumber(),
-                    score,
-                    insights,
-                    walletAddress,
-                    LocalDateTime.now()
-            );
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("customerReference", request.customerReference());
+            response.put("identityData", request.identityData());
+            response.put("analysis", aiNode);
+            response.put("blockchain", Map.of(
+                    "walletAddress", request.walletAddress(),
+                    "transactionHash", txHash,
+                    "blockchainReceipt", "https://sepolia.etherscan.io/tx/" + txHash
+            ));
 
-            UserScore saved = userScoreRepository.save(userScore);
-            return ResponseEntity.ok(saved);
+            System.out.println("--- AURA SCORE GENERATED AND MINTED SUCCESSFULLY ---");
+            return ResponseEntity.ok(response);
+
         } catch (Exception ex) {
+            ex.printStackTrace();
             Map<String, String> errorBody = new LinkedHashMap<>();
             errorBody.put("error", ex.getClass().getSimpleName());
-            errorBody.put("details", ex.getMessage() != null ? ex.getMessage() : "Unexpected error occurred");
+            errorBody.put("details", ex.getMessage());
             return ResponseEntity.status(500).body(errorBody);
         }
     }
 
-    public record CalculateScoreRequest(
-            @NotBlank(message = "phoneNumber is required") String phoneNumber
-    ) {
-    }
+    public record GenerateScoreRequest(
+            @NotBlank(message = "Mono code is required") String code,
+            @NotBlank(message = "Wallet address is required") String walletAddress,
+            @NotBlank(message = "customerReference is required") String customerReference,
+            @NotNull(message = "identityData is required") JsonNode identityData
+    ) {}
 }
-
