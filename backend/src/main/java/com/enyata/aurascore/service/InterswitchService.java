@@ -3,6 +3,7 @@ package com.enyata.aurascore.service;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.Map;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -42,10 +43,10 @@ public class InterswitchService {
     @Value("${interswitch.token.url:https://qa.interswitchng.com/passport/oauth/token}")
     private String tokenUrl;
 
-    @Value("${interswitch.client.id:sandbox_id}")
+    @Value("${interswitch.client.id}")
     private String clientId;
 
-    @Value("${interswitch.client.secret:sandbox_secret}")
+    @Value("${interswitch.client.secret}")
     private String clientSecret;
 
     private volatile String cachedToken;
@@ -61,6 +62,47 @@ public class InterswitchService {
                     return factory;
                 })
                 .build();
+    }
+
+    public JsonNode validatePayment(String transactionReference, String expectedAmountKobo) {
+        try {
+            String url = UriComponentsBuilder.fromHttpUrl("https://qa.interswitchng.com/collections/api/v1/gettransaction.json")
+                    .queryParam("merchantcode", clientId.trim())
+                    .queryParam("transactionreference", transactionReference.trim())
+                    .queryParam("amount", expectedAmountKobo.trim())
+                    .build()
+                    .toUriString();
+
+            HttpEntity<Void> request = new HttpEntity<>(bearerJsonHeaders(getAccessToken()));
+            ResponseEntity<JsonNode> response = restTemplate.exchange(url, HttpMethod.GET, request, JsonNode.class);
+            return response.getBody();
+        } catch (HttpClientErrorException ex) {
+            try {
+                return objectMapper.readTree(ex.getResponseBodyAsString());
+            } catch (Exception parseEx) {
+                throw new ResponseStatusException(BAD_GATEWAY, "Payment verification API failed", ex);
+            }
+        }
+    }
+
+    public JsonNode checkLoanEligibility(String customerId, String requestedAmountKobo) {
+        try {
+            String url = "https://qa.interswitchng.com/paymentgateway/api/v1/lending/eligibility";
+            Map<String, Object> body = Map.of(
+                    "amount", requestedAmountKobo,
+                    "customerId", customerId,
+                    "entityCode", "PBL"
+            );
+            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, bearerJsonHeaders(getAccessToken()));
+            ResponseEntity<JsonNode> response = restTemplate.postForEntity(url, entity, JsonNode.class);
+            return response.getBody();
+        } catch (HttpClientErrorException ex) {
+            try {
+                return objectMapper.readTree(ex.getResponseBodyAsString());
+            } catch (Exception parseEx) {
+                throw new ResponseStatusException(BAD_GATEWAY, "Lending eligibility API failed", ex);
+            }
+        }
     }
 
     public String verifyBankAccount(String accountNumber, String bankCode) {
@@ -91,7 +133,6 @@ public class InterswitchService {
             }
             return response.getBody();
         } catch (HttpClientErrorException ex) {
-            System.err.println("INTERSWITCH BANK ERROR: " + ex.getResponseBodyAsString());
             throw mapClientError(ex, "Interswitch bank account verification failed");
         } catch (RestClientException ex) {
             throw new ResponseStatusException(BAD_GATEWAY, "Interswitch bank account verification API unavailable", ex);
@@ -110,13 +151,9 @@ public class InterswitchService {
         }
 
         try {
-            System.out.println("Target URL: " + resolveTokenUrl());
-            System.out.println("Loaded Client ID: " + clientId);
-
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
             headers.set("Accept", "application/json");
-            headers.set("User-Agent", "PostmanRuntime/7.36.3");
 
             String safeClientId = clientId.trim();
             String safeClientSecret = clientSecret.trim();
@@ -141,9 +178,7 @@ public class InterswitchService {
             return cachedToken;
 
         } catch (HttpClientErrorException ex) {
-            String actualInterswitchError = ex.getResponseBodyAsString();
-            System.err.println("INTERSWITCH RAW ERROR: " + actualInterswitchError);
-            throw new ResponseStatusException(BAD_GATEWAY, "Interswitch Auth Failed: " + actualInterswitchError, ex);
+            throw new ResponseStatusException(BAD_GATEWAY, "Interswitch Auth Failed", ex);
         } catch (Exception ex) {
             throw new ResponseStatusException(BAD_GATEWAY, "Failed to parse token response", ex);
         }
