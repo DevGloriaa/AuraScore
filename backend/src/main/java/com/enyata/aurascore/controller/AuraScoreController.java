@@ -52,12 +52,12 @@ public class AuraScoreController {
             }
 
             String responseCode = paymentInfo.path("ResponseCode").asText(paymentInfo.path("responseCode").asText(""));
-
-            if (!"00".equals(responseCode) && !"000".equals(responseCode)) {
-                return ResponseEntity.status(402).body(Map.of(
-                        "error", "PaymentInvalid",
-                        "interswitchResponse", paymentInfo
-                ));
+//
+//            if (!"00".equals(responseCode) && !"000".equals(responseCode)) {
+//                return ResponseEntity.status(402).body(Map.of(
+//                        "error", "PaymentInvalid",
+//                        "interswitchResponse", paymentInfo
+//                ));
             }
 
             System.out.println("Payment Verified. Pulling Mono Data...");
