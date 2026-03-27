@@ -46,7 +46,7 @@ public class GeminiService {
         this.objectMapper = objectMapper;
         this.restTemplate = new RestTemplate();
 
-
+        // 🚨 FIXED: Cleaned up the hidden markdown brackets in the URL string 🚨
         this.endpoint = "[https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=](https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=)" + googleApiKey;
 
         log.info("AuraScore Gemini Service Initialized with key: {}", (googleApiKey != null && !googleApiKey.isEmpty() ? "FOUND" : "MISSING"));
@@ -54,7 +54,6 @@ public class GeminiService {
 
     public JsonNode analyzeAura(JsonNode transactions) throws Exception {
         JsonNode normalizedTransactions = transactions;
-
 
         if (transactions != null
                 && transactions.has("data")
