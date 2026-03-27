@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import Navbar from "@/components/Navbar";
+import Simulator from "@/components/Simulator";
 import Hero from "@/components/Hero";
 import Features from "@/components/Features";
 import HowItWorks from "@/components/HowItWorks";
@@ -20,6 +21,7 @@ export default function Home() {
       <Hero onLoginClick={handleOpenLogin} />
       <Features />
       <HowItWorks />
+      <Simulator/>
       <Footer />
       
       <LoginModal 

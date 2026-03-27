@@ -24,7 +24,7 @@ export default function Hero({ onLoginClick }: HeroProps) {
             className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#18181B] border border-[#27272A] text-gray-300 text-sm font-medium mb-8 shadow-lg"
           >
             <span className="w-2 h-2 rounded-full bg-[#C8102E] animate-pulse shadow-[0_0_8px_#C8102E]"></span>
-            Built on Interswitch Infrastructure
+            Powered by Mono & Gemini AI
           </motion.div>
           
           <div className="mb-6 overflow-hidden">
@@ -34,8 +34,8 @@ export default function Hero({ onLoginClick }: HeroProps) {
                transition={{ duration: 0.9, ease: [0.16, 1, 0.3, 1] }}
                className="text-5xl md:text-7xl font-bold text-white leading-[1.1] tracking-tight"
              >
-               Credit scoring for the <br/>
-               <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#C8102E] via-[#F97316] to-[#C8102E] animate-gradient-x">modern African</span>
+               Decentralized credit for the <br/>
+               <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#C8102E] via-[#F97316] to-[#C8102E] animate-gradient-x">modern web.</span>
              </motion.h1>
           </div>
 
@@ -45,7 +45,7 @@ export default function Hero({ onLoginClick }: HeroProps) {
             transition={{ duration: 0.6, delay: 0.2 }}
             className="text-lg text-gray-400 mb-10 leading-relaxed max-w-lg"
           >
-            AuraScore uses advanced AI and real-time transaction data to build an accurate, fair, and actionable credit profile that you actually own across the continent.
+            AuraScore securely aggregates your financial history, runs quantitative AI analysis, and mints an immutable, self-sovereign credit profile. You own your data.
           </motion.p>
           
           <motion.div 
@@ -58,14 +58,14 @@ export default function Hero({ onLoginClick }: HeroProps) {
               onClick={onLoginClick}
               className="relative px-8 py-4 bg-[#C8102E] text-white font-semibold rounded-xl overflow-hidden group shadow-[0_0_25px_rgba(200,16,46,0.25)] border border-[#C8102E]/50"
             >
-              <span className="relative z-10">Get Aura Score</span>
+              <span className="relative z-10">Initialize Profile</span>
               <div className="absolute inset-0 h-full w-full bg-gradient-to-r from-[#C8102E] to-[#F97316] opacity-0 group-hover:opacity-100 transition-opacity duration-500 ease-out" />
             </button>
             <a 
               href="#how-it-works"
               className="px-8 py-4 bg-[#18181B] hover:bg-[#27272A] text-white font-semibold rounded-xl border border-[#27272A] transition-colors text-center"
             >
-              Learn More
+              View Protocol
             </a>
           </motion.div>
         </div>
@@ -80,10 +80,10 @@ export default function Hero({ onLoginClick }: HeroProps) {
           {/* Dashboard Container */}
           <div className="absolute w-full max-w-md bg-[#18181B]/80 backdrop-blur-2xl border border-[#27272A] shadow-2xl rounded-3xl p-8 z-10">
             <div className="flex justify-between items-center mb-10">
-              <h3 className="text-gray-400 font-medium">Aura Score Identity</h3>
+              <h3 className="text-gray-400 font-medium">Aura Identity Profile</h3>
               <div className="bg-[#2563EB]/10 text-[#2563EB] text-xs px-3 py-1.5 rounded-full border border-[#2563EB]/30 font-medium flex items-center gap-1.5">
                 <div className="w-1.5 h-1.5 rounded-full bg-[#2563EB]"></div>
-                Enyata Guard
+                Verified On-Chain
               </div>
             </div>
             
@@ -102,7 +102,7 @@ export default function Hero({ onLoginClick }: HeroProps) {
                 <div className="text-center">
                   <span className="text-7xl font-bold font-mono text-white tracking-tighter shadow-sm">785</span>
                   <p className="text-sm text-gray-500 mt-1 uppercase tracking-widest font-semibold flex items-center justify-center gap-1">
-                    Excellent
+                    High Velocity
                     <svg className="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
                   </p>
                 </div>
@@ -115,14 +115,14 @@ export default function Hero({ onLoginClick }: HeroProps) {
                     <svg className="w-4 h-4 text-[#2563EB]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
                  </div>
                  <div>
-                    <p className="text-xs text-gray-400 mb-1">AI Engine Insight</p>
-                    <p className="text-white font-medium text-sm leading-snug">Interswitch transaction volume boosted your score by 15 points this month.</p>
+                    <p className="text-xs text-gray-400 mb-1">Quantitative Insight</p>
+                    <p className="text-white font-medium text-sm leading-snug">Consistent cash flow velocity aligns perfectly with the Diamond-Handed Builder persona.</p>
                  </div>
               </div>
             </div>
 
-            <button disabled className="w-full py-4 bg-[#18181B] text-gray-500 font-medium rounded-xl border border-[#27272A] cursor-not-allowed">
-              Mint Credential (Incoming)
+            <button disabled className="w-full py-4 bg-[#18181B] text-green-500 font-medium rounded-xl border border-[#27272A]/50 cursor-not-allowed">
+              Soulbound Token Active
             </button>
           </div>
           
