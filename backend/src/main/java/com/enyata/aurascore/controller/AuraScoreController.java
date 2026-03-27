@@ -58,7 +58,7 @@ public class AuraScoreController {
 //                        "error", "PaymentInvalid",
 //                        "interswitchResponse", paymentInfo
 //                ));
-            }
+//            }
 
             System.out.println("Payment Verified. Pulling Mono Data...");
             String accountId = monoService.exchangeToken(request.code());
