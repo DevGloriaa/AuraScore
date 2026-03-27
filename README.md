@@ -1,7 +1,7 @@
 # 🌟 Aura Score: Decentralized AI Credit Identity
 **Submission for the Enyata x Interswitch Buildathon 2026**
 
-🔗 **Live Demo Link:** [Insert your Render/Vercel/Railway link here before submitting!]
+🔗 **Live Demo Link:** [https://aurascoreapp.vercel.app](https://aurascoreapp.vercel.app)
 
 
 ---
