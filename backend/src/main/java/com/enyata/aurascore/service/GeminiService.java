@@ -20,14 +20,22 @@ public class GeminiService {
     private final String endpoint;
 
     private static final String SYSTEM_PROMPT = """
-            You are a Senior DeFi Credit Analyst. Analyze the following raw bank transaction data. You must evaluate cash flow stability, spending habits, and income consistency.
+            You are an elite Web3 Quantitative Analyst and decentralized identity architect. 
+            Your task is to analyze the provided raw bank transaction data and generate an "Aura Score"—a modernized, decentralized credit score.
             
-            Return ONLY a raw JSON object with absolutely no markdown formatting, no backticks, and no extra text. Use this exact schema:
+            EVALUATION CRITERIA (Think step-by-step before scoring):
+            1. Cash Flow Health: Weigh total inflows against total outflows. 
+            2. Transaction Velocity: Evaluate the frequency and consistency of account activity.
+            3. Risk Profile: Identify erratic spending, zero balances, or high-risk transfers.
+            
+            Return ONLY a raw JSON object. Do NOT wrap it in ```json blocks. No markdown, no backticks, no extra text. Use this exact schema:
             {
-              "auraScore": [An integer between 300 and 850],
-              "persona": [Choose one: 'The Aggressive Accumulator', 'The Consistent Saver', 'The High-Velocity Spender', 'The Risk-Prone Payer'],
+              "auraScore": [Integer between 300 and 850. Be highly analytical and realistic based on the data provided],
+              "persona": [Choose the best fit: 'The Diamond-Handed Builder', 'The Steady Fiat Maximalist', 'The Velocity Degenerate', 'The Liquid Phantom'],
               "loanEligibility": [Choose one: 'ELIGIBLE', 'HIGH_RISK', 'REJECTED'],
-              "recommendation": [A punchy, one-sentence professional summary of their financial health]
+              "recommendation": [A punchy, 2-sentence professional yet slightly edgy summary of their true financial health and risk level],
+              "topSpendingCategory": [Infer their highest spending category from the data, e.g., 'Transfers', 'Food & Dining', 'Subscriptions', 'Unknown'],
+              "financialVelocity": [Choose one based on transaction frequency: 'High', 'Moderate', 'Low']
             }
             """;
 
@@ -37,12 +45,17 @@ public class GeminiService {
     ) {
         this.objectMapper = objectMapper;
         this.restTemplate = new RestTemplate();
-        this.endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + googleApiKey;
+
+
+        this.endpoint = "[https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=](https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=)" + googleApiKey;
+
         log.info("AuraScore Gemini Service Initialized with key: {}", (googleApiKey != null && !googleApiKey.isEmpty() ? "FOUND" : "MISSING"));
     }
 
     public JsonNode analyzeAura(JsonNode transactions) throws Exception {
         JsonNode normalizedTransactions = transactions;
+
+
         if (transactions != null
                 && transactions.has("data")
                 && transactions.path("data").has("transactions")
@@ -50,6 +63,7 @@ public class GeminiService {
             normalizedTransactions = transactions.path("data").path("transactions");
         }
 
+        // Fallback for empty accounts (Thin File)
         if (normalizedTransactions == null || normalizedTransactions.isMissingNode() || normalizedTransactions.isNull() || normalizedTransactions.isEmpty() || normalizedTransactions.toString().equals("[]")) {
             log.warn("Mono returned empty transaction data. Triggering Thin File fallback.");
             String fallback = """
@@ -57,7 +71,9 @@ public class GeminiService {
                   "auraScore": 0,
                   "persona": "Thin File",
                   "loanEligibility": "REJECTED",
-                  "recommendation": "Insufficient transaction history to generate an Aura Score."
+                  "recommendation": "Insufficient transaction history to generate an Aura Score.",
+                  "topSpendingCategory": "None",
+                  "financialVelocity": "Low"
                 }
                 """;
             return objectMapper.readTree(fallback);
@@ -69,6 +85,7 @@ public class GeminiService {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
 
+        // Format the request strictly to Google's Gemini API specs
         Map<String, Object> requestBodyMap = Map.of(
                 "contents", List.of(
                         Map.of("parts", List.of(
@@ -97,13 +114,14 @@ public class GeminiService {
             }
             String aiText = firstPart.path("text").asText();
 
-            log.info("Gemini Analysis Received!");
+            log.info("Gemini Analysis Received successfully!");
             return normalizeAuraJson(aiText);
         }
 
         throw new RuntimeException("Gemini API call failed with status: " + response.getStatusCode());
     }
 
+    // Strips any accidental markdown that Gemini might return despite instructions
     private JsonNode normalizeAuraJson(String aiText) throws Exception {
         String cleaned = aiText.replaceAll("```json", "").replaceAll("```", "").trim();
         return objectMapper.readTree(cleaned);
