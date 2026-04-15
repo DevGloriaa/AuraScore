@@ -9,6 +9,81 @@ interface LoginModalProps {
   onClose: () => void;
 }
 
+interface InitiatePaymentResponse {
+  txnRef: string;
+  hash: string;
+  merchantCode: string;
+  payItemId: string;
+  amount: number;
+  currency: string;
+  redirectUrl?: string;
+  site_redirect_url?: string;
+}
+
+type CheckoutFn = (payload: any) => void;
+
+const INTERSWITCH_SDK_URL = "https://newwebpay.qa.interswitchng.com/inline-checkout.js";
+const INTERSWITCH_SCRIPT_ID = "isw-inline-sdk";
+
+const API_BASE_URL = 
+  typeof window !== 'undefined' && window.location.hostname === 'localhost'
+    ? "http://localhost:8000"
+    : "https://aurascore.onrender.com";
+
+// 1. Safely resolve the checkout function without crashing
+function resolveCheckoutFunction(): CheckoutFn | null {
+  if (typeof window === 'undefined') return null;
+  
+  if ((window as any).webpayCheckout) {
+    return (window as any).webpayCheckout;
+  }
+
+  const legacyCheckout = (window as any).webpay?.checkout;
+  if (legacyCheckout) {
+    return (payload: any) => legacyCheckout(payload);
+  }
+
+  return null;
+}
+
+// 2. The Judge-Proof SDK Loader (No CORS triggers, resilient to MetaMask)
+async function loadInterswitchSDK(): Promise<CheckoutFn> {
+  return new Promise((resolve, reject) => {
+    // Fast path: already loaded
+    const existingIsw = resolveCheckoutFunction();
+    if (existingIsw) return resolve(existingIsw);
+
+    let script = document.getElementById(INTERSWITCH_SCRIPT_ID) as HTMLScriptElement;
+
+    // Inject purely standard script tag (NO crossOrigin attribute)
+    if (!script) {
+      script = document.createElement("script");
+      script.id = INTERSWITCH_SCRIPT_ID;
+      script.src = INTERSWITCH_SDK_URL;
+      script.async = true;
+      document.body.appendChild(script);
+    }
+
+    // Polling fallback to survive browser extension crashes
+    let attempts = 0;
+    const maxAttempts = 24; // 12 seconds max (500ms * 24)
+
+    const checkInterval = setInterval(() => {
+      attempts++;
+      const isw = resolveCheckoutFunction();
+      
+      if (isw) {
+        clearInterval(checkInterval);
+        console.log("Interswitch SDK Loaded via Polling");
+        resolve(isw);
+      } else if (attempts >= maxAttempts) {
+        clearInterval(checkInterval);
+        reject(new Error("Gateway blocked by network or browser extension. Please check your connection."));
+      }
+    }, 500);
+  });
+}
+
 export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
   if (!isOpen) return null;
 
@@ -26,6 +101,11 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
   const monoInstance = useRef<any>(null);
 
   useEffect(() => {
+    // Pre-load the SDK quietly in the background
+    loadInterswitchSDK().catch(() => {
+      console.warn("Silent SDK pre-load timeout. Will retry on click.");
+    });
+
     monoInstance.current = new Connect({
       key: "test_pk_tpejozw1np7i11dpxzxj",
       onSuccess: (data: any) => {
@@ -51,30 +131,122 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
     }
   }
 
-  // Gateway Simulation for Demo Flow
+  async function verifyPayment(txnReference: string) {
+    const verifyRes = await fetch(`${API_BASE_URL.replace(/\/+$/, "")}/api/v1/score/verify-payment`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ txnRef: txnReference }),
+    });
+
+    const verifyJson = await verifyRes.json().catch(() => ({}));
+    if (!verifyRes.ok) {
+      throw new Error(
+        verifyJson.error || verifyJson.details || "Payment verification failed."
+      );
+    }
+  }
+
   async function launchInterswitchCheckout() {
     setError(null);
     setIsLoading(true);
-    setLoadingMessage("Securing payment node...");
+    setLoadingMessage("Opening Interswitch Payment Gateway...");
 
-    setTimeout(() => {
-      const demoTxnRef = "AURA-REF-" + Date.now();
-      setTxnRef(demoTxnRef);
+    try {
+      // Safely await the hardened loader
+      const checkout = await loadInterswitchSDK();
+
+      const initRes = await fetch(`${API_BASE_URL}/api/v1/score/initiate-payment`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email || "demo@user.com" }),
+      });
+
+      const initJson = await initRes.json().catch(() => ({}));
+      if (!initRes.ok) {
+        throw new Error(
+          initJson.error ||
+            initJson.details ||
+            `Unable to initialize payment (Status: ${initRes.status})`
+        );
+      }
+
+      const payload: InitiatePaymentResponse = initJson?.data ?? initJson;
+      const {
+        txnRef: paymentTxnRef,
+        hash,
+        merchantCode,
+        payItemId,
+        amount,
+        currency,
+      } = payload;
+
+      if (!paymentTxnRef || !hash || !merchantCode || !payItemId || !amount || !currency) {
+        throw new Error("Payment initialization returned incomplete checkout details.");
+      }
+
+      if (Number(amount) !== 50000) {
+        throw new Error(`Unexpected payment amount from backend: ${amount}. Expected 50000 kobo.`);
+      }
+
+      // site_redirect_url must match backend hash input exactly.
+      const finalRedirectUrl = payload.site_redirect_url || "http://localhost:3000/";
+
+      // Keep checkout amount fixed at NGN 500.00 in kobo.
+      const finalAmount = 50000;
+
+      // Execute the actual payment popup
+      const checkoutPayload = {
+        merchant_code: merchantCode,
+        pay_item_id: payItemId,
+        txn_ref: paymentTxnRef,
+        amount: finalAmount,
+        currency,
+        hash,
+        site_redirect_url: finalRedirectUrl,
+        onComplete: async (response: any) => {
+          const responseCode = String(response?.resp || "");
+          if (responseCode !== "00") {
+            setError(`Payment was not successful (resp: ${responseCode || "N/A"}).`);
+            setIsLoading(false);
+            return;
+          }
+
+          try {
+            setLoadingMessage("Verifying payment...");
+            await verifyPayment(paymentTxnRef);
+            setTxnRef(paymentTxnRef);
+            setStep(4);
+          } catch (verificationError: any) {
+            setError(
+              verificationError?.message ||
+                "Payment could not be verified. Please contact support."
+            );
+          } finally {
+            setIsLoading(false);
+          }
+        },
+        onClose: () => {
+          setIsLoading(false);
+        },
+      };
+
+      console.log("INTERSWITCH PAYLOAD:", checkoutPayload);
+      checkout(checkoutPayload);
+    } catch (err: any) {
+      setError(err?.message || "Failed to launch Interswitch checkout.");
       setIsLoading(false);
-      setStep(4); 
-    }, 2000); 
+    }
   }
 
   useEffect(() => {
     if (!isLoading || step === 3) return; 
     
-    // Polished, professional loading states
     const messages = [
-      "Securing digital identity...", 
+      "Securing identity...", 
       "Aggregating financial history...", 
-      "Running Gemini AI quantitative analysis...", 
-      "Minting Soulbound token on Sepolia...",
-      "Finalizing decentralized credit profile..."
+      "Running hashing algorithm...", 
+      "Executing AI risk evaluation...",
+      "Finalizing credit profile..."
     ];
     let idx = 0;
     setLoadingMessage(messages[idx]);
@@ -91,22 +263,21 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
     };
   }, [isLoading, step]);
 
-  // Backend Integration
   async function handleGenerate() {
     setError(null);
     setIsLoading(true);
 
     try {
-      const fetchPromise = fetch(`https://aurascore.onrender.com/api/v1/score/generate`, {
+      const fetchPromise = fetch(`${API_BASE_URL}/api/v1/score/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           code: monoCode,
-          walletAddress: walletAddress,
+          walletAddress: walletAddress, 
           customerReference: email || "demo@user.com",
           transactionReference: txnRef,
           identityData: {
-            fullName: "Aura User", 
+            fullName: "Gloria Obiorah", 
             bvn: "00000000000"        
           }
         }),
@@ -157,10 +328,10 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
   );
 
   const stepsList = [
-    { num: 1, label: "Identity" },
-    { num: 2, label: "Connect Asset" },
-    { num: 3, label: "Network Fee" },
-    { num: 4, label: "Analysis" },
+    { num: 1, label: "Applicant Details" },
+    { num: 2, label: "Fetch Financials" },
+    { num: 3, label: "Underwriting Fee" },
+    { num: 4, label: "Risk Assessment" },
   ];
 
   return (
@@ -172,7 +343,7 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
           <h1 className="text-3xl font-black tracking-tighter bg-clip-text text-transparent bg-gradient-to-r from-red-500 to-red-800">
             AURA SCORE
           </h1>
-          <p className="text-sm text-slate-500 mt-1 font-medium">Decentralized Financial Truth.</p>
+          <p className="text-sm text-slate-500 mt-1 font-medium">Alternative Credit Truth.</p>
         </div>
 
         <div className="flex-1 space-y-10">
@@ -218,24 +389,23 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
           {auraResult ? (
             <div className="text-center space-y-6 animate-in fade-in duration-700">
               <div className="inline-block px-4 py-1.5 bg-red-500/10 border border-red-500/20 text-red-400 rounded-full text-sm font-bold tracking-widest uppercase">
-                {String(auraResult?.analysis?.persona ?? "Verified Profile")}
+                {String(auraResult?.analysis?.persona ?? "Applicant Profile")}
               </div>
               
               <h2 className="text-[7rem] leading-none font-black text-transparent bg-clip-text bg-gradient-to-b from-white to-slate-500 drop-shadow-2xl">
                 {String(auraResult?.analysis?.auraScore ?? "—")}
               </h2>
 
-              {/* ✨ THE ELITE AI ANALYSIS BOX ✨ */}
               <div className="bg-black/40 border border-white/10 rounded-2xl p-6 text-left space-y-4 max-w-lg mx-auto shadow-inner relative overflow-hidden">
                 <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-red-500/0 via-red-500/50 to-red-500/0"></div>
                 
                 <div className="flex items-center gap-2 mb-2">
                   <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></div>
-                  <span className="text-xs font-bold text-red-400 tracking-widest uppercase">Gemini AI Analysis</span>
+                  <span className="text-xs font-bold text-red-400 tracking-widest uppercase">AI Risk Analysis</span>
                 </div>
                 
-                <p className="text-slate-300 text-sm leading-relaxed">
-                  {String(auraResult?.analysis?.recommendation ?? "Your financial data has been successfully analyzed and minted on-chain.")}
+                <p className="text-sm text-gray-300 leading-relaxed">
+                  {String(auraResult?.analysis?.recommendation ?? "Financial data has been successfully evaluated against the underwriting risk model.")}
                 </p>
                 
                 <div className="grid grid-cols-2 gap-4 pt-4 border-t border-white/5 mt-4">
@@ -253,10 +423,10 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
               <div className="pt-4 flex justify-center gap-4">
                 <a href={String(auraResult?.blockchain?.blockchainReceipt ?? "#")} target="_blank" rel="noreferrer" 
                    className="inline-flex items-center px-8 py-4 bg-white text-black font-bold rounded-xl hover:bg-slate-200 transition-colors shadow-[0_0_30px_rgba(255,255,255,0.2)]">
-                  Verify On-Chain
+                  Verify-on-chain
                 </a>
                 <button onClick={resetAll} className="px-8 py-4 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl font-bold transition-colors">
-                  Close Session
+                  Close Review
                 </button>
               </div>
             </div>
@@ -266,8 +436,8 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
               {step === 1 && (
                 <div className="space-y-6 animate-in fade-in zoom-in-95 duration-500">
                   <div>
-                    <h2 className="text-3xl font-bold mb-2">Initialize Profile.</h2>
-                    <p className="text-slate-400">Enter your email to claim your decentralized financial identity.</p>
+                    <h2 className="text-3xl font-bold mb-2">Initialize Applicant Review.</h2>
+                    <p className="text-slate-400">Enter email to begin the applicant underwriting workflow.</p>
                   </div>
                   <input
                     type="email"
@@ -279,7 +449,7 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
                   <div className="flex justify-end pt-4">
                     <button onClick={() => setStep(2)} disabled={!email || isLoading} 
                             className="flex items-center justify-center px-8 py-4 w-full sm:w-auto bg-gradient-to-r from-red-600 to-red-800 hover:from-red-500 hover:to-red-700 disabled:opacity-50 rounded-xl font-bold shadow-lg shadow-red-900/30 transition-all">
-                      Continue
+                      Proceed
                     </button>
                   </div>
                 </div>
@@ -288,13 +458,13 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
               {step === 2 && (
                 <div className="space-y-6 animate-in fade-in zoom-in-95 duration-500">
                   <div>
-                    <h2 className="text-3xl font-bold mb-2">Connect Asset.</h2>
-                    <p className="text-slate-400">Securely link your primary financial institution via Mono. We extract read-only metadata to calculate your financial velocity.</p>
+                    <h2 className="text-3xl font-bold mb-2">Fetch Financial data</h2>
+                    <p className="text-slate-400">Securely pull read-only transaction history to support the applicant review.</p>
                   </div>
                   <div className="pt-4">
                     <button onClick={startMono} disabled={isLoading} 
                             className="w-full flex items-center justify-center px-8 py-5 bg-white text-black hover:bg-slate-200 disabled:opacity-50 rounded-xl font-bold text-lg transition-all shadow-[0_0_30px_rgba(255,255,255,0.1)]">
-                      Authenticate with Mono
+                     Authenticate
                     </button>
                   </div>
                 </div>
@@ -303,17 +473,17 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
               {step === 3 && (
                 <div className="space-y-6 animate-in fade-in zoom-in-95 duration-500">
                   <div>
-                    <h2 className="text-3xl font-bold mb-2">Protocol Fee.</h2>
-                    <p className="text-slate-400">To permanently secure your identity on the blockchain, a network gas fee is required.</p>
+                    <h2 className="text-3xl font-bold mb-2">Underwriting Fee.</h2>
+                    <p className="text-slate-400">A standard API processing fee is required to underwrite this applicant using Aura Score.</p>
                   </div>
                   <div className="pt-4 flex items-center justify-between p-6 bg-black/40 border border-white/10 rounded-xl">
-                    <div className="font-medium text-slate-300">Network Gas Fee</div>
+                    <div className="font-medium text-slate-300">Fee Due</div>
                     <div className="font-bold text-2xl text-white">₦500.00</div>
                   </div>
                   <div className="flex justify-end pt-4">
                     <button onClick={launchInterswitchCheckout} disabled={isLoading} 
                             className="flex items-center justify-center px-8 py-4 w-full sm:w-auto bg-gradient-to-r from-red-600 to-red-800 hover:from-red-500 hover:to-red-700 disabled:opacity-50 rounded-xl font-bold shadow-lg shadow-red-900/30 transition-all">
-                      {isLoading ? <><Spinner /> Processing...</> : "Authorize Payment"}
+                      {isLoading ? <><Spinner /> Processing...</> : "Collect Fee"}
                     </button>
                   </div>
                 </div>
@@ -322,8 +492,8 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
               {step === 4 && (
                 <div className="space-y-6 animate-in fade-in zoom-in-95 duration-500 text-center">
                   <div>
-                    <h2 className="text-3xl font-bold mb-2">Finalizing Analysis.</h2>
-                    <p className="text-slate-400">Data secured. Proceed to generate your quantitative credit profile.</p>
+                    <h2 className="text-3xl font-bold mb-2">Finalizing Risk Assessment.</h2>
+                    <p className="text-slate-400">Fee confirmed. Proceed to generate the applicant risk profile.</p>
                   </div>
                   
                   {isLoading ? (
@@ -338,7 +508,7 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
                     <div className="pt-8 flex flex-col sm:flex-row gap-4 justify-center">
                       <button onClick={handleGenerate} disabled={!monoCode || !walletAddress || !txnRef} 
                               className="flex items-center justify-center px-10 py-5 bg-gradient-to-r from-red-600 to-red-800 hover:from-red-500 hover:to-red-700 disabled:opacity-50 rounded-xl font-bold text-lg shadow-[0_0_40px_rgba(220,38,38,0.4)] transition-all">
-                        Generate Aura Score
+                        Generate Risk Profile
                       </button>
                     </div>
                   )}

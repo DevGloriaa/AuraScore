@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "AuraScore | Decentralized Financial Truth",
-  description: "Advanced AI-driven decentralized credit scoring built for the modern Web3 economy. Own your financial data.",
+  description: "Advanced AI-driven decentralized credit scoring built for the modern Web3 economy.",
 };
 
 export default function RootLayout({
@@ -27,7 +27,9 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        {children}
+      </body>
     </html>
   );
 }

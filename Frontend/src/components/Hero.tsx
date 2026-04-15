@@ -58,14 +58,14 @@ export default function Hero({ onLoginClick }: HeroProps) {
               onClick={onLoginClick}
               className="relative px-8 py-4 bg-[#C8102E] text-white font-semibold rounded-xl overflow-hidden group shadow-[0_0_25px_rgba(200,16,46,0.25)] border border-[#C8102E]/50"
             >
-              <span className="relative z-10">Initialize Profile</span>
+              <span className="relative z-10">Get Started</span>
               <div className="absolute inset-0 h-full w-full bg-gradient-to-r from-[#C8102E] to-[#F97316] opacity-0 group-hover:opacity-100 transition-opacity duration-500 ease-out" />
             </button>
             <a 
-              href="#how-it-works"
+              href="#simulator"
               className="px-8 py-4 bg-[#18181B] hover:bg-[#27272A] text-white font-semibold rounded-xl border border-[#27272A] transition-colors text-center"
             >
-              View Protocol
+              Learn more
             </a>
           </motion.div>
         </div>
