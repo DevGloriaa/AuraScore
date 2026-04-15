@@ -22,9 +22,8 @@ public class MonoService {
     }
 
     public String exchangeToken(String code) {
-        System.out.println("Attempting LIVE Mono Auth with code: " + code);
+        // ... (Your existing exchangeToken code is good as-is)
         String url = "https://api.withmono.com/v2/accounts/auth";
-
         HttpHeaders headers = new HttpHeaders();
         headers.set("mono-sec-key", monoSecretKey);
         headers.setContentType(MediaType.APPLICATION_JSON);
@@ -35,26 +34,14 @@ public class MonoService {
 
         try {
             ResponseEntity<JsonNode> response = restTemplate.postForEntity(url, entity, JsonNode.class);
-            System.out.println("Raw Auth Response: " + response.getBody());
-
-
-            String accountId = response.getBody().path("data").path("id").asText("");
-            if (accountId.isBlank()) {
-                throw new RuntimeException("Mono did not return an ID! Response: " + response.getBody());
-            }
-
-            System.out.println("Mono Auth Successful! Account ID: " + accountId);
-            return accountId;
-
+            JsonNode responseBody = response.getBody();
+            return responseBody == null ? "" : responseBody.path("data").path("id").asText("");
         } catch (HttpClientErrorException e) {
-
-            System.err.println("MONO AUTH FAILED! Error from Mono: " + e.getResponseBodyAsString());
-            throw new RuntimeException("Mono Auth failed");
+            throw new RuntimeException("Mono Auth failed: " + e.getResponseBodyAsString());
         }
     }
 
     public JsonNode getTransactions(String accountId) {
-        System.out.println("Fetching LIVE transactions for Account: " + accountId);
         String url = "https://api.withmono.com/v2/accounts/" + accountId + "/transactions";
 
         HttpHeaders headers = new HttpHeaders();
@@ -65,12 +52,11 @@ public class MonoService {
 
         try {
             ResponseEntity<JsonNode> response = restTemplate.exchange(url, HttpMethod.GET, entity, JsonNode.class);
-            System.out.println("LIVE Transactions fetched successfully!");
-
-            return response.getBody();
+            JsonNode rawData = response.getBody();
+            return rawData == null ? objectMapper.createObjectNode() : rawData;
 
         } catch (HttpClientErrorException e) {
-            System.err.println("MONO FETCH FAILED! Error from Mono: " + e.getResponseBodyAsString());
+            System.err.println("MONO FETCH FAILED: " + e.getResponseBodyAsString());
             throw new RuntimeException("Mono Fetch failed");
         }
     }

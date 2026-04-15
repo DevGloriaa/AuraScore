@@ -1,6 +1,8 @@
 package com.enyata.aurascore.service;
 
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.Map;
@@ -26,28 +28,34 @@ import org.springframework.web.util.UriComponentsBuilder;
 
 import static org.springframework.http.HttpStatus.BAD_GATEWAY;
 import static org.springframework.http.HttpStatus.BAD_REQUEST;
+import static org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR;
 
 @Service
 public class InterswitchService {
 
-    private static final String BANK_ACCOUNT_PATH = "/api/v1/nameenquiry/banks/accounts/names";
-    private static final String DEFAULT_IDENTITY_BASE_URL = "https://api-marketplace-routing.k8.isw.la";
-    private static final long TOKEN_EXPIRY_SAFETY_WINDOW_SECONDS = 60;
-
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
 
-    @Value("${interswitch.identity.api.url:https://api-marketplace-routing.k8.isw.la}")
-    private String identityBaseUrl;
+    @Value("${ISW_MERCHANT_CODE:MX6072}")
+    private String merchantCode;
 
-    @Value("${interswitch.token.url:https://qa.interswitchng.com/passport/oauth/token}")
-    private String tokenUrl;
+    @Value("${ISW_PAY_ITEM_ID:9405967}")
+    private String payItemId;
+
+    @Value("${ISW_SECRET_KEY:ajkdpGiF6PHVrwK}")
+    private String secretKey;
 
     @Value("${interswitch.client.id}")
     private String clientId;
 
     @Value("${interswitch.client.secret}")
     private String clientSecret;
+
+    @Value("${interswitch.identity.api.url:https://api-marketplace-routing.k8.isw.la}")
+    private String identityBaseUrl;
+
+    @Value("${interswitch.token.url:https://qa.interswitchng.com/passport/oauth/token}")
+    private String tokenUrl;
 
     private volatile String cachedToken;
     private volatile long tokenExpiresAtEpochSeconds;
@@ -64,12 +72,60 @@ public class InterswitchService {
                 .build();
     }
 
-    public JsonNode validatePayment(String transactionReference, String expectedAmountKobo) {
+    public Map<String, Object> initiatePayment(String email) {
+        if (email == null || email.isBlank()) {
+            throw new ResponseStatusException(BAD_REQUEST, "email is required");
+        }
+
+        String txnRef = "AURA-" + Instant.now().getEpochSecond();
+        String amount = "50000";
+        String currency = "566";
+        String siteRedirectUrl = "http://localhost:3000/";
+
+        String rawString = txnRef + merchantCode + payItemId + amount + siteRedirectUrl + secretKey;
+        String hash = generateSha512(rawString);
+
+        return Map.of(
+                "txnRef", txnRef,
+                "amount", amount,
+                "hash", hash,
+                "merchantCode", merchantCode,
+                "payItemId", payItemId,
+                "currency", currency,
+                "site_redirect_url", siteRedirectUrl
+        );
+    }
+
+    private String generateSha512(String input) {
         try {
-            String url = UriComponentsBuilder.fromHttpUrl("https://qa.interswitchng.com/collections/api/v1/gettransaction.json")
-                    .queryParam("merchantcode", clientId.trim())
-                    .queryParam("transactionreference", transactionReference.trim())
-                    .queryParam("amount", expectedAmountKobo.trim())
+            MessageDigest md = MessageDigest.getInstance("SHA-512");
+            byte[] bytes = md.digest(input.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder();
+            for (byte b : bytes) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new ResponseStatusException(INTERNAL_SERVER_ERROR, "SHA-512 Algorithm not found");
+        }
+    }
+
+    public JsonNode validatePayment(String transactionReference, String expectedAmountKobo) {
+        if (transactionReference == null || transactionReference.isBlank()) {
+            throw new ResponseStatusException(BAD_REQUEST, "transactionReference is required");
+        }
+        if (expectedAmountKobo == null || expectedAmountKobo.isBlank()) {
+            throw new ResponseStatusException(BAD_REQUEST, "amount is required");
+        }
+
+        try {
+            String normalizedReference = transactionReference.trim();
+            String normalizedAmount = expectedAmountKobo.trim();
+
+            String url = UriComponentsBuilder.fromUriString("https://qa.interswitchng.com/collections/api/v1/gettransaction.json")
+                    .queryParam("merchantcode", merchantCode.trim())
+                    .queryParam("transactionreference", normalizedReference)
+                    .queryParam("amount", normalizedAmount)
                     .build()
                     .toUriString();
 
@@ -82,6 +138,37 @@ public class InterswitchService {
             } catch (Exception parseEx) {
                 throw new ResponseStatusException(BAD_GATEWAY, "Payment verification API failed", ex);
             }
+        } catch (RestClientException ex) {
+            throw new ResponseStatusException(BAD_GATEWAY, "Payment verification API unavailable", ex);
+        }
+    }
+
+    public String verifyBankAccount(String accountNumber, String bankCode) {
+        if (accountNumber == null || accountNumber.isBlank()) {
+            throw new ResponseStatusException(BAD_REQUEST, "accountNumber is required");
+        }
+        if (bankCode == null || bankCode.isBlank()) {
+            throw new ResponseStatusException(BAD_REQUEST, "bankCode is required");
+        }
+
+        try {
+            String url = UriComponentsBuilder.fromHttpUrl(buildIdentityUrl("/api/v1/nameenquiry/banks/accounts/names"))
+                    .queryParam("accountNumber", accountNumber.trim())
+                    .queryParam("bankCode", bankCode.trim())
+                    .build()
+                    .toUriString();
+
+            HttpEntity<Void> request = new HttpEntity<>(bearerJsonHeaders(getAccessToken()));
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, request, String.class);
+
+            if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null || response.getBody().isBlank()) {
+                throw new ResponseStatusException(BAD_GATEWAY, "Bank verification failed");
+            }
+            return response.getBody();
+        } catch (HttpClientErrorException ex) {
+            throw mapClientError(ex, "Bank verification failed");
+        } catch (RestClientException ex) {
+            throw new ResponseStatusException(BAD_GATEWAY, "Bank verification API unavailable", ex);
         }
     }
 
@@ -105,48 +192,9 @@ public class InterswitchService {
         }
     }
 
-    public String verifyBankAccount(String accountNumber, String bankCode) {
-        if (accountNumber == null || accountNumber.isBlank()) {
-            throw new ResponseStatusException(BAD_REQUEST, "accountNumber is required for bank account verification");
-        }
-        if (bankCode == null || bankCode.isBlank()) {
-            throw new ResponseStatusException(BAD_REQUEST, "bankCode is required for bank account verification");
-        }
-
-        try {
-            String url = UriComponentsBuilder.fromHttpUrl(buildIdentityUrl(BANK_ACCOUNT_PATH))
-                    .queryParam("accountNumber", accountNumber.trim())
-                    .queryParam("bankCode", bankCode.trim())
-                    .build()
-                    .toUriString();
-
-            HttpEntity<Void> request = new HttpEntity<>(bearerJsonHeaders(getAccessToken()));
-            ResponseEntity<String> response = restTemplate.exchange(
-                    url,
-                    HttpMethod.GET,
-                    request,
-                    String.class
-            );
-
-            if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null || response.getBody().isBlank()) {
-                throw new ResponseStatusException(BAD_GATEWAY, "Interswitch bank account verification failed");
-            }
-            return response.getBody();
-        } catch (HttpClientErrorException ex) {
-            throw mapClientError(ex, "Interswitch bank account verification failed");
-        } catch (RestClientException ex) {
-            throw new ResponseStatusException(BAD_GATEWAY, "Interswitch bank account verification API unavailable", ex);
-        }
-    }
-
-    @Deprecated
-    public String getTransactionHistory(String phoneNumber) {
-        throw new ResponseStatusException(BAD_REQUEST, "Interswitch transaction history is no longer supported in this service");
-    }
-
     private synchronized String getAccessToken() {
         long now = Instant.now().getEpochSecond();
-        if (cachedToken != null && !cachedToken.isBlank() && now < (tokenExpiresAtEpochSeconds - TOKEN_EXPIRY_SAFETY_WINDOW_SECONDS)) {
+        if (cachedToken != null && !cachedToken.isBlank() && now < (tokenExpiresAtEpochSeconds - 60)) {
             return cachedToken;
         }
 
@@ -154,20 +202,13 @@ public class InterswitchService {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
             headers.set("Accept", "application/json");
-
-            String safeClientId = clientId.trim();
-            String safeClientSecret = clientSecret.trim();
-            headers.set("Authorization", "Basic " + base64(safeClientId + ":" + safeClientSecret));
+            headers.set("Authorization", "Basic " + base64(clientId.trim() + ":" + clientSecret.trim()));
 
             MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
             body.add("grant_type", "client_credentials");
 
             HttpEntity<MultiValueMap<String, String>> requestEntity = new HttpEntity<>(body, headers);
-            ResponseEntity<String> response = restTemplate.postForEntity(
-                    resolveTokenUrl(),
-                    requestEntity,
-                    String.class
-            );
+            ResponseEntity<String> response = restTemplate.postForEntity(resolveTokenUrl(), requestEntity, String.class);
 
             JsonNode tokenJson = objectMapper.readTree(response.getBody());
             String accessToken = tokenJson.path("access_token").asText("");
@@ -176,11 +217,8 @@ public class InterswitchService {
             cachedToken = accessToken;
             tokenExpiresAtEpochSeconds = Instant.now().getEpochSecond() + Math.max(1L, expiresIn);
             return cachedToken;
-
-        } catch (HttpClientErrorException ex) {
-            throw new ResponseStatusException(BAD_GATEWAY, "Interswitch Auth Failed", ex);
         } catch (Exception ex) {
-            throw new ResponseStatusException(BAD_GATEWAY, "Failed to parse token response", ex);
+            throw new ResponseStatusException(BAD_GATEWAY, "Interswitch Auth Failed", ex);
         }
     }
 
@@ -188,13 +226,13 @@ public class InterswitchService {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.setBearerAuth(token);
-        headers.set("TerminalID", "3PBA0001");
+        headers.set("TerminalID", "7000000001");
         return headers;
     }
 
     private ResponseStatusException mapClientError(HttpClientErrorException ex, String message) {
         if (ex.getStatusCode().value() == 401 || ex.getStatusCode().value() == 403) {
-            return new ResponseStatusException(BAD_GATEWAY, message + ": upstream authorization failed", ex);
+            return new ResponseStatusException(BAD_GATEWAY, message + ": authorization failed", ex);
         }
         return new ResponseStatusException(BAD_REQUEST, message, ex);
     }
@@ -204,19 +242,13 @@ public class InterswitchService {
     }
 
     private String buildIdentityUrl(String path) {
-        String normalizedBase = (identityBaseUrl == null || identityBaseUrl.isBlank())
-                ? DEFAULT_IDENTITY_BASE_URL
-                : identityBaseUrl.trim();
-        if (normalizedBase.endsWith("/")) {
-            normalizedBase = normalizedBase.substring(0, normalizedBase.length() - 1);
-        }
+        String normalizedBase = (identityBaseUrl == null || identityBaseUrl.isBlank()) ? "https://api-marketplace-routing.k8.isw.la" : identityBaseUrl.trim();
+        if (normalizedBase.endsWith("/")) normalizedBase = normalizedBase.substring(0, normalizedBase.length() - 1);
         return normalizedBase + path;
     }
 
     private String resolveTokenUrl() {
-        if (tokenUrl != null && !tokenUrl.isBlank()) {
-            return tokenUrl.trim();
-        }
+        if (tokenUrl != null && !tokenUrl.isBlank()) return tokenUrl.trim();
         return "https://qa.interswitchng.com/passport/oauth/token";
     }
 }
