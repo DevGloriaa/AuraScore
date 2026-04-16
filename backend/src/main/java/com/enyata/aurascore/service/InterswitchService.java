@@ -128,6 +128,12 @@ public class InterswitchService {
             String normalizedReference = transactionReference.trim();
             String normalizedAmount = expectedAmountKobo.trim();
 
+            // DEMO MODE: Simulate network delay for realistic UX
+            Thread.sleep(1500);
+
+            // DEMO MODE: Bypass actual Interswitch call due to WAF IP block
+            // Production code below (commented out for hackathon):
+            /*
             String url = UriComponentsBuilder.fromUriString("https://qa.interswitchng.com/collections/api/v1/gettransaction.json")
                     .queryParam("merchantcode", merchantCode.trim())
                     .queryParam("transactionreference", normalizedReference)
@@ -140,20 +146,30 @@ public class InterswitchService {
             HttpEntity<Void> request = new HttpEntity<>(headers);
             ResponseEntity<JsonNode> response = exchangeWithTimeout(url, HttpMethod.GET, request, JsonNode.class);
             return response.getBody();
-        } catch (HttpClientErrorException ex) {
-            try {
-                return objectMapper.readTree(ex.getResponseBodyAsString());
-            } catch (Exception parseEx) {
-                throw new ResponseStatusException(BAD_GATEWAY, "Payment verification API failed", ex);
-            }
-        } catch (TimeoutException ex) {
-            logTimeout("validatePayment", ex);
-            throw new ResponseStatusException(BAD_GATEWAY, "Payment verification API timeout", ex);
-        } catch (ResourceAccessException ex) {
-            logTimeout("validatePayment", ex);
-            throw new ResponseStatusException(BAD_GATEWAY, "Payment verification API timeout/unreachable", ex);
-        } catch (RestClientException ex) {
-            throw new ResponseStatusException(BAD_GATEWAY, "Payment verification API unavailable", ex);
+            */
+
+            // DEMO MODE: Return mock successful payment verification response
+            String mockResponse = "{\n" +
+                    "  \"ResponseCode\": \"00\",\n" +
+                    "  \"ResponseDescription\": \"Approved\",\n" +
+                    "  \"ResponseStatus\": true,\n" +
+                    "  \"TransactionReference\": \"" + normalizedReference + "\",\n" +
+                    "  \"Amount\": " + normalizedAmount + ",\n" +
+                    "  \"PaymentReference\": \"" + normalizedReference + "\",\n" +
+                    "  \"MerchantCode\": \"" + merchantCode.trim() + "\",\n" +
+                    "  \"PaymentMethod\": \"CARD\",\n" +
+                    "  \"TransactionDate\": \"" + java.time.LocalDateTime.now() + "\",\n" +
+                    "  \"Currency\": \"566\",\n" +
+                    "  \"Status\": \"PAID\"\n" +
+                    "}";
+            return objectMapper.readTree(mockResponse);
+
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw new ResponseStatusException(INTERNAL_SERVER_ERROR, "Request interrupted", ex);
+        } catch (Exception ex) {
+            // Catch JSON parsing or other unexpected errors
+            throw new ResponseStatusException(INTERNAL_SERVER_ERROR, "Mock response generation failed", ex);
         }
     }
 

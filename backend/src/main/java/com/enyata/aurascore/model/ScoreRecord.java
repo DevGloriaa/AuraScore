@@ -20,5 +20,7 @@ public class ScoreRecord {
     private String customerReference;
     private JsonNode aiAnalysis;
     private LocalDateTime createdAt;
+    private String paymentStatus;  // PAID, PENDING, FAILED
+    private String transactionReference;  // Track the transaction reference
 }
 
