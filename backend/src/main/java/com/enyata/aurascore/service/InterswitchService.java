@@ -4,11 +4,17 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.http.HttpEntity;
@@ -32,6 +38,10 @@ import static org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR;
 
 @Service
 public class InterswitchService {
+
+    private static final Logger log = LoggerFactory.getLogger(InterswitchService.class);
+    private static final ZoneId WAT_ZONE_ID = ZoneId.of("Africa/Lagos");
+    private static final DateTimeFormatter WAT_TIMESTAMP_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX");
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
@@ -65,8 +75,8 @@ public class InterswitchService {
         this.restTemplate = restTemplateBuilder
                 .requestFactory(() -> {
                     SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-                    factory.setConnectTimeout(10_000);
-                    factory.setReadTimeout(10_000);
+                    factory.setConnectTimeout(5_000);
+                    factory.setReadTimeout(5_000);
                     return factory;
                 })
                 .build();
@@ -129,7 +139,9 @@ public class InterswitchService {
                     .build()
                     .toUriString();
 
-            HttpEntity<Void> request = new HttpEntity<>(bearerJsonHeaders(getAccessToken()));
+            HttpHeaders headers = bearerJsonHeaders(getAccessToken());
+            logOutboundRequest("GET", url, headers);
+            HttpEntity<Void> request = new HttpEntity<>(headers);
             ResponseEntity<JsonNode> response = restTemplate.exchange(url, HttpMethod.GET, request, JsonNode.class);
             return response.getBody();
         } catch (HttpClientErrorException ex) {
@@ -158,7 +170,9 @@ public class InterswitchService {
                     .build()
                     .toUriString();
 
-            HttpEntity<Void> request = new HttpEntity<>(bearerJsonHeaders(getAccessToken()));
+            HttpHeaders headers = bearerJsonHeaders(getAccessToken());
+            logOutboundRequest("GET", url, headers);
+            HttpEntity<Void> request = new HttpEntity<>(headers);
             ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, request, String.class);
 
             if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null || response.getBody().isBlank()) {
@@ -180,7 +194,9 @@ public class InterswitchService {
                     "customerId", customerId,
                     "entityCode", "PBL"
             );
-            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, bearerJsonHeaders(getAccessToken()));
+            HttpHeaders headers = bearerJsonHeaders(getAccessToken());
+            logOutboundRequest("POST", url, headers);
+            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
             ResponseEntity<JsonNode> response = restTemplate.postForEntity(url, entity, JsonNode.class);
             return response.getBody();
         } catch (HttpClientErrorException ex) {
@@ -203,12 +219,15 @@ public class InterswitchService {
             headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
             headers.set("Accept", "application/json");
             headers.set("Authorization", "Basic " + base64(clientId.trim() + ":" + clientSecret.trim()));
+            headers.set("Timestamp", watTimestamp());
 
             MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
             body.add("grant_type", "client_credentials");
 
             HttpEntity<MultiValueMap<String, String>> requestEntity = new HttpEntity<>(body, headers);
-            ResponseEntity<String> response = restTemplate.postForEntity(resolveTokenUrl(), requestEntity, String.class);
+            String resolvedTokenUrl = resolveTokenUrl();
+            logOutboundRequest("POST", resolvedTokenUrl, headers);
+            ResponseEntity<String> response = restTemplate.postForEntity(resolvedTokenUrl, requestEntity, String.class);
 
             JsonNode tokenJson = objectMapper.readTree(response.getBody());
             String accessToken = tokenJson.path("access_token").asText("");
@@ -227,7 +246,33 @@ public class InterswitchService {
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.setBearerAuth(token);
         headers.set("TerminalID", "7000000001");
+        headers.set("Timestamp", watTimestamp());
         return headers;
+    }
+
+    private String watTimestamp() {
+        return ZonedDateTime.now(WAT_ZONE_ID).format(WAT_TIMESTAMP_FORMATTER);
+    }
+
+    private void logOutboundRequest(String method, String url, HttpHeaders headers) {
+        System.out.println("[Interswitch] Outbound Request => method=" + method + ", url=" + url);
+        System.out.println("[Interswitch] Outbound Headers => " + maskHeaders(headers));
+        log.info("[Interswitch] Outbound Request => method={}, url={}", method, url);
+        log.info("[Interswitch] Outbound Headers => {}", maskHeaders(headers));
+    }
+
+    private Map<String, String> maskHeaders(HttpHeaders headers) {
+        Map<String, String> masked = new LinkedHashMap<>();
+        headers.forEach((name, values) -> {
+            String value = String.join(",", values);
+            String lowered = name.toLowerCase();
+            boolean sensitive = lowered.contains("authorization")
+                    || lowered.contains("secret")
+                    || lowered.contains("token")
+                    || lowered.contains("key");
+            masked.put(name, sensitive ? "***MASKED***" : value);
+        });
+        return masked;
     }
 
     private ResponseStatusException mapClientError(HttpClientErrorException ex, String message) {
