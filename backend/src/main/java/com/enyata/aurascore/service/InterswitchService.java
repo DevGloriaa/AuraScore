@@ -67,7 +67,7 @@ public class InterswitchService {
     @Value("${interswitch.identity.api.url:https://api-marketplace-routing.k8.isw.la}")
     private String identityBaseUrl;
 
-    @Value("${interswitch.token.url:https://qa.interswitchng.com/passport/oauth/token}")
+    @Value("${interswitch.token.url:https://aurascoreapp.vercel.app/api/isw-proxy}")
     private String tokenUrl;
 
     private volatile String cachedToken;
@@ -359,6 +359,6 @@ public class InterswitchService {
 
     private String resolveTokenUrl() {
         if (tokenUrl != null && !tokenUrl.isBlank()) return tokenUrl.trim();
-        return "https://qa.interswitchng.com/passport/oauth/token";
+        return "https://aurascoreapp.vercel.app/api/isw-proxy";
     }
 }
