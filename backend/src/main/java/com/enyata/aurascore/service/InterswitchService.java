@@ -3,6 +3,7 @@ package com.enyata.aurascore.service;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.net.SocketTimeoutException;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
@@ -10,23 +11,24 @@ import java.time.format.DateTimeFormatter;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.TimeoutException;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.server.ResponseStatusException;
@@ -70,16 +72,9 @@ public class InterswitchService {
     private volatile String cachedToken;
     private volatile long tokenExpiresAtEpochSeconds;
 
-    public InterswitchService(ObjectMapper objectMapper, RestTemplateBuilder restTemplateBuilder) {
+    public InterswitchService(ObjectMapper objectMapper, @Qualifier("interswitchRestTemplate") RestTemplate restTemplate) {
         this.objectMapper = objectMapper;
-        this.restTemplate = restTemplateBuilder
-                .requestFactory(() -> {
-                    SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-                    factory.setConnectTimeout(5_000);
-                    factory.setReadTimeout(5_000);
-                    return factory;
-                })
-                .build();
+        this.restTemplate = restTemplate;
     }
 
     public Map<String, Object> initiatePayment(String email) {
@@ -142,7 +137,7 @@ public class InterswitchService {
             HttpHeaders headers = bearerJsonHeaders(getAccessToken());
             logOutboundRequest("GET", url, headers);
             HttpEntity<Void> request = new HttpEntity<>(headers);
-            ResponseEntity<JsonNode> response = restTemplate.exchange(url, HttpMethod.GET, request, JsonNode.class);
+            ResponseEntity<JsonNode> response = exchangeWithTimeout(url, HttpMethod.GET, request, JsonNode.class);
             return response.getBody();
         } catch (HttpClientErrorException ex) {
             try {
@@ -150,6 +145,12 @@ public class InterswitchService {
             } catch (Exception parseEx) {
                 throw new ResponseStatusException(BAD_GATEWAY, "Payment verification API failed", ex);
             }
+        } catch (TimeoutException ex) {
+            logTimeout("validatePayment", ex);
+            throw new ResponseStatusException(BAD_GATEWAY, "Payment verification API timeout", ex);
+        } catch (ResourceAccessException ex) {
+            logTimeout("validatePayment", ex);
+            throw new ResponseStatusException(BAD_GATEWAY, "Payment verification API timeout/unreachable", ex);
         } catch (RestClientException ex) {
             throw new ResponseStatusException(BAD_GATEWAY, "Payment verification API unavailable", ex);
         }
@@ -173,7 +174,7 @@ public class InterswitchService {
             HttpHeaders headers = bearerJsonHeaders(getAccessToken());
             logOutboundRequest("GET", url, headers);
             HttpEntity<Void> request = new HttpEntity<>(headers);
-            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, request, String.class);
+            ResponseEntity<String> response = exchangeWithTimeout(url, HttpMethod.GET, request, String.class);
 
             if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null || response.getBody().isBlank()) {
                 throw new ResponseStatusException(BAD_GATEWAY, "Bank verification failed");
@@ -181,6 +182,12 @@ public class InterswitchService {
             return response.getBody();
         } catch (HttpClientErrorException ex) {
             throw mapClientError(ex, "Bank verification failed");
+        } catch (TimeoutException ex) {
+            logTimeout("verifyBankAccount", ex);
+            throw new ResponseStatusException(BAD_GATEWAY, "Bank verification API timeout", ex);
+        } catch (ResourceAccessException ex) {
+            logTimeout("verifyBankAccount", ex);
+            throw new ResponseStatusException(BAD_GATEWAY, "Bank verification API timeout/unreachable", ex);
         } catch (RestClientException ex) {
             throw new ResponseStatusException(BAD_GATEWAY, "Bank verification API unavailable", ex);
         }
@@ -197,7 +204,7 @@ public class InterswitchService {
             HttpHeaders headers = bearerJsonHeaders(getAccessToken());
             logOutboundRequest("POST", url, headers);
             HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
-            ResponseEntity<JsonNode> response = restTemplate.postForEntity(url, entity, JsonNode.class);
+            ResponseEntity<JsonNode> response = postForEntityWithTimeout(url, entity, JsonNode.class);
             return response.getBody();
         } catch (HttpClientErrorException ex) {
             try {
@@ -205,6 +212,12 @@ public class InterswitchService {
             } catch (Exception parseEx) {
                 throw new ResponseStatusException(BAD_GATEWAY, "Lending eligibility API failed", ex);
             }
+        } catch (TimeoutException ex) {
+            logTimeout("checkLoanEligibility", ex);
+            throw new ResponseStatusException(BAD_GATEWAY, "Lending eligibility API timeout", ex);
+        } catch (ResourceAccessException ex) {
+            logTimeout("checkLoanEligibility", ex);
+            throw new ResponseStatusException(BAD_GATEWAY, "Lending eligibility API timeout/unreachable", ex);
         }
     }
 
@@ -227,7 +240,7 @@ public class InterswitchService {
             HttpEntity<MultiValueMap<String, String>> requestEntity = new HttpEntity<>(body, headers);
             String resolvedTokenUrl = resolveTokenUrl();
             logOutboundRequest("POST", resolvedTokenUrl, headers);
-            ResponseEntity<String> response = restTemplate.postForEntity(resolvedTokenUrl, requestEntity, String.class);
+            ResponseEntity<String> response = postForEntityWithTimeout(resolvedTokenUrl, requestEntity, String.class);
 
             JsonNode tokenJson = objectMapper.readTree(response.getBody());
             String accessToken = tokenJson.path("access_token").asText("");
@@ -236,6 +249,12 @@ public class InterswitchService {
             cachedToken = accessToken;
             tokenExpiresAtEpochSeconds = Instant.now().getEpochSecond() + Math.max(1L, expiresIn);
             return cachedToken;
+        } catch (TimeoutException ex) {
+            logTimeout("getAccessToken", ex);
+            throw new ResponseStatusException(BAD_GATEWAY, "Interswitch Auth timeout", ex);
+        } catch (ResourceAccessException ex) {
+            logTimeout("getAccessToken", ex);
+            throw new ResponseStatusException(BAD_GATEWAY, "Interswitch Auth timeout/unreachable", ex);
         } catch (Exception ex) {
             throw new ResponseStatusException(BAD_GATEWAY, "Interswitch Auth Failed", ex);
         }
@@ -273,6 +292,49 @@ public class InterswitchService {
             masked.put(name, sensitive ? "***MASKED***" : value);
         });
         return masked;
+    }
+
+    private <T> ResponseEntity<T> exchangeWithTimeout(String url, HttpMethod method, HttpEntity<?> entity, Class<T> responseType) throws TimeoutException {
+        try {
+            return restTemplate.exchange(url, method, entity, responseType);
+        } catch (ResourceAccessException ex) {
+            if (isTimeout(ex)) {
+                throw new TimeoutException(ex.getMessage());
+            }
+            throw ex;
+        }
+    }
+
+    private <T> ResponseEntity<T> postForEntityWithTimeout(String url, HttpEntity<?> entity, Class<T> responseType) throws TimeoutException {
+        try {
+            return restTemplate.postForEntity(url, entity, responseType);
+        } catch (ResourceAccessException ex) {
+            if (isTimeout(ex)) {
+                throw new TimeoutException(ex.getMessage());
+            }
+            throw ex;
+        }
+    }
+
+    private boolean isTimeout(ResourceAccessException ex) {
+        Throwable cause = ex.getMostSpecificCause();
+        if (cause instanceof SocketTimeoutException) {
+            return true;
+        }
+        String message = cause != null ? cause.getMessage() : ex.getMessage();
+        return message != null && message.toLowerCase().contains("timed out");
+    }
+
+    private void logTimeout(String operation, ResourceAccessException ex) {
+        String detail = ex.getMostSpecificCause() != null ? ex.getMostSpecificCause().getMessage() : ex.getMessage();
+        System.err.println("[Interswitch][Timeout] Operation=" + operation + " failed: " + detail);
+        log.error("[Interswitch][Timeout] Operation={} failed: {}", operation, detail, ex);
+    }
+
+    private void logTimeout(String operation, TimeoutException ex) {
+        String detail = ex.getMessage() != null ? ex.getMessage() : "Operation timed out";
+        System.err.println("[Interswitch][Timeout] Operation=" + operation + " timed out: " + detail);
+        log.error("[Interswitch][Timeout] Operation={} timed out: {}", operation, detail, ex);
     }
 
     private ResponseStatusException mapClientError(HttpClientErrorException ex, String message) {
