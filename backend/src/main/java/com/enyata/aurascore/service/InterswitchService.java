@@ -44,6 +44,7 @@ public class InterswitchService {
     private static final Logger log = LoggerFactory.getLogger(InterswitchService.class);
     private static final ZoneId WAT_ZONE_ID = ZoneId.of("Africa/Lagos");
     private static final DateTimeFormatter WAT_TIMESTAMP_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX");
+    private static final String BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
@@ -231,6 +232,7 @@ public class InterswitchService {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
             headers.set("Accept", "application/json");
+            headers.set("User-Agent", BROWSER_USER_AGENT);
             headers.set("Authorization", "Basic " + base64(clientId.trim() + ":" + clientSecret.trim()));
             headers.set("Timestamp", watTimestamp());
 
@@ -263,6 +265,7 @@ public class InterswitchService {
     private HttpHeaders bearerJsonHeaders(String token) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("User-Agent", BROWSER_USER_AGENT);
         headers.setBearerAuth(token);
         headers.set("TerminalID", "7000000001");
         headers.set("Timestamp", watTimestamp());
