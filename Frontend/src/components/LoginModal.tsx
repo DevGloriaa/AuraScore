@@ -16,7 +16,6 @@ interface InitiatePaymentResponse {
   payItemId: string;
   amount: number;
   currency: string;
-  redirectUrl?: string;
   site_redirect_url?: string;
 }
 
@@ -184,25 +183,17 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
         throw new Error("Payment initialization returned incomplete checkout details.");
       }
 
-      if (Number(amount) !== 50000) {
-        throw new Error(`Unexpected payment amount from backend: ${amount}. Expected 50000 kobo.`);
-      }
-
-      // site_redirect_url must match backend hash input exactly.
-      const finalRedirectUrl = payload.site_redirect_url || "http://localhost:3000/";
-
-      // Keep checkout amount fixed at NGN 500.00 in kobo.
-      const finalAmount = 50000;
-
       // Execute the actual payment popup
       const checkoutPayload = {
         merchant_code: merchantCode,
         pay_item_id: payItemId,
         txn_ref: paymentTxnRef,
-        amount: finalAmount,
+        amount,
         currency,
         hash,
-        site_redirect_url: finalRedirectUrl,
+        ...(payload.site_redirect_url
+          ? { site_redirect_url: payload.site_redirect_url }
+          : {}),
         onComplete: async (response: any) => {
           const responseCode = String(response?.resp || "");
           if (responseCode !== "00") {

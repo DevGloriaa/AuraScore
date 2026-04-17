@@ -12,7 +12,7 @@ interface InterswitchCheckoutPayload {
 	amount: number;
 	currency: string;
 	hash: string;
-	onPaymentCompleted: (response: InterswitchPaymentResponse) => void;
+	onComplete: (response: InterswitchPaymentResponse) => void;
 	onClose?: () => void;
 }
 
