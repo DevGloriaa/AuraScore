@@ -6,7 +6,9 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.Map;
+import java.util.UUID;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
@@ -33,11 +35,18 @@ import static org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR;
 @Service
 public class InterswitchService {
 
+    private static final String DEMO_AMOUNT_KOBO = "50000";
+    private static final String DEMO_SITE_REDIRECT_URL = "http://localhost:3000/";
+    private static final String DEMO_CURRENCY = "566";
+
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
 
     @Value("${ISW_MERCHANT_CODE:MX6072}")
     private String merchantCode;
+
+    @Value("${interswitch.product-id:}")
+    private String productId;
 
     @Value("${ISW_PAY_ITEM_ID:9405967}")
     private String payItemId;
@@ -72,28 +81,42 @@ public class InterswitchService {
                 .build();
     }
 
-    public Map<String, Object> initiatePayment(String email) {
+    public WebpayInitResponse initiatePayment(String email) {
         if (email == null || email.isBlank()) {
             throw new ResponseStatusException(BAD_REQUEST, "email is required");
         }
 
-        String txnRef = "AURA-" + Instant.now().getEpochSecond();
-        String amount = "50000";
-        String currency = "566";
-        String siteRedirectUrl = "http://localhost:3000/";
+        String txnRef = generateTxnRef();
+        String amount = DEMO_AMOUNT_KOBO;
+        String siteRedirectUrl = DEMO_SITE_REDIRECT_URL;
+        String resolvedProductId = resolveProductId();
 
-        String rawString = txnRef + merchantCode + payItemId + amount + siteRedirectUrl + secretKey;
+        String rawString = txnRef + resolvedProductId + payItemId + amount + siteRedirectUrl + secretKey;
         String hash = generateSha512(rawString);
 
-        return Map.of(
-                "txnRef", txnRef,
-                "amount", amount,
-                "hash", hash,
-                "merchantCode", merchantCode,
-                "payItemId", payItemId,
-                "currency", currency,
-                "site_redirect_url", siteRedirectUrl
+        return new WebpayInitResponse(
+                txnRef,
+                hash,
+                amount,
+                siteRedirectUrl,
+                resolvedProductId,
+                payItemId,
+                DEMO_CURRENCY,
+                email.trim()
         );
+    }
+
+    private String generateTxnRef() {
+        String timestamp = String.valueOf(Instant.now().toEpochMilli());
+        String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 8).toUpperCase();
+        return "AURA-" + timestamp + "-" + suffix;
+    }
+
+    private String resolveProductId() {
+        if (productId != null && !productId.isBlank()) {
+            return productId.trim();
+        }
+        return merchantCode == null ? "" : merchantCode.trim();
     }
 
     private String generateSha512(String input) {
@@ -250,5 +273,17 @@ public class InterswitchService {
     private String resolveTokenUrl() {
         if (tokenUrl != null && !tokenUrl.isBlank()) return tokenUrl.trim();
         return "https://qa.interswitchng.com/passport/oauth/token";
+    }
+
+    public record WebpayInitResponse(
+            @JsonProperty("txn_ref") String txnRef,
+            @JsonProperty("hash") String hash,
+            @JsonProperty("amount") String amount,
+            @JsonProperty("site_redirect_url") String siteRedirectUrl,
+            @JsonProperty("product_id") String productId,
+            @JsonProperty("pay_item_id") String payItemId,
+            @JsonProperty("currency") String currency,
+            @JsonProperty("email") String email
+    ) {
     }
 }

@@ -9,20 +9,24 @@ interface LoginModalProps {
   onClose: () => void;
 }
 
+// FIXED: Strictly matching the backend's snake_case JSON response
 interface InitiatePaymentResponse {
-  txnRef: string;
+  txn_ref: string;
   hash: string;
-  merchantCode: string;
-  payItemId: string;
-  amount: number;
+  product_id: string;
+  pay_item_id: string;
+  amount: string;
   currency: string;
-  site_redirect_url?: string;
+  site_redirect_url: string;
 }
 
 type CheckoutFn = (payload: any) => void;
 
 const INTERSWITCH_SDK_URL = "https://newwebpay.qa.interswitchng.com/inline-checkout.js";
 const INTERSWITCH_SCRIPT_ID = "isw-inline-sdk";
+const INTERSWITCH_AMOUNT = 50000;
+const INTERSWITCH_CURRENCY = "566";
+const DEFAULT_REDIRECT_URL = "http://localhost:3000/";
 
 const API_BASE_URL = 
   typeof window !== 'undefined' && window.location.hostname === 'localhost'
@@ -169,31 +173,32 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
         );
       }
 
+      // FIXED: Destructure using the EXACT snake_case keys from the backend
       const payload: InitiatePaymentResponse = initJson?.data ?? initJson;
       const {
-        txnRef: paymentTxnRef,
+        txn_ref: paymentTxnRef,
         hash,
-        merchantCode,
-        payItemId,
+        product_id,
+        pay_item_id,
         amount,
         currency,
+        site_redirect_url
       } = payload;
 
-      if (!paymentTxnRef || !hash || !merchantCode || !payItemId || !amount || !currency) {
+      if (!paymentTxnRef || !hash || !product_id || !pay_item_id) {
         throw new Error("Payment initialization returned incomplete checkout details.");
       }
 
-      // Execute the actual payment popup
+      // FIXED: Build the STRICT payload for Interswitch
       const checkoutPayload = {
-        merchant_code: merchantCode,
-        pay_item_id: payItemId,
+        merchant_code: product_id,    // Mapping backend's product_id to merchant_code
+        pay_item_id: pay_item_id,
         txn_ref: paymentTxnRef,
-        amount,
-        currency,
-        hash,
-        ...(payload.site_redirect_url
-          ? { site_redirect_url: payload.site_redirect_url }
-          : {}),
+        amount: Number(amount),       // Blindly trusting the backend's 50000
+        currency: currency,           // Blindly trusting the backend's 566
+        site_redirect_url: site_redirect_url,
+        hash: hash,
+        mode: 'TEST',                 // REQUIRED FOR SANDBOX
         onComplete: async (response: any) => {
           const responseCode = String(response?.resp || "");
           if (responseCode !== "00") {
@@ -455,7 +460,7 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
                   <div className="pt-4">
                     <button onClick={startMono} disabled={isLoading} 
                             className="w-full flex items-center justify-center px-8 py-5 bg-white text-black hover:bg-slate-200 disabled:opacity-50 rounded-xl font-bold text-lg transition-all shadow-[0_0_30px_rgba(255,255,255,0.1)]">
-                     Authenticate
+                      Authenticate
                     </button>
                   </div>
                 </div>

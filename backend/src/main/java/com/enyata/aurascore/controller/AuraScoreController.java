@@ -39,9 +39,8 @@ public class AuraScoreController {
     }
 
     @PostMapping("/initiate-payment")
-    public ResponseEntity<?> initiatePayment(@Valid @RequestBody InitiateRequest request) {
-        Map<String, Object> result = interswitchService.initiatePayment(request.email());
-        return ResponseEntity.ok(result);
+    public ResponseEntity<InterswitchService.WebpayInitResponse> initiatePayment(@Valid @RequestBody InitiateRequest request) {
+        return ResponseEntity.ok(interswitchService.initiatePayment(request.email()));
     }
 
     @PostMapping("/verify-payment")
