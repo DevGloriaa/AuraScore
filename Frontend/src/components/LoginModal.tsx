@@ -26,7 +26,8 @@ const INTERSWITCH_SDK_URL = "https://newwebpay.qa.interswitchng.com/inline-check
 const INTERSWITCH_SCRIPT_ID = "isw-inline-sdk";
 const INTERSWITCH_AMOUNT = 50000;
 const INTERSWITCH_CURRENCY = "566";
-const DEFAULT_REDIRECT_URL = "http://localhost:3000/";
+// FIXED: Defaulting to Vercel to match Interswitch Origin checks
+const DEFAULT_REDIRECT_URL = "https://aurascoreapp.vercel.app/";
 
 const API_BASE_URL = 
   typeof window !== 'undefined' && window.location.hostname === 'localhost'
@@ -180,25 +181,23 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
         hash,
         product_id,
         pay_item_id,
-        amount,
-        currency,
-        site_redirect_url
+        currency
       } = payload;
 
       if (!paymentTxnRef || !hash || !product_id || !pay_item_id) {
         throw new Error("Payment initialization returned incomplete checkout details.");
       }
 
-      // FIXED: Build the STRICT payload for Interswitch
+      // FIXED: Build the STRICT payload for Interswitch with hardcoded origin and amount
       const checkoutPayload = {
-        merchant_code: product_id,    // Mapping backend's product_id to merchant_code
+        merchant_code: product_id,    
         pay_item_id: pay_item_id,
         txn_ref: paymentTxnRef,
-        amount: Number(amount),       // Blindly trusting the backend's 50000
-        currency: currency,           // Blindly trusting the backend's 566
-        site_redirect_url: site_redirect_url,
+        amount: 50000,                                         // <-- FORCE EXACT INTEGER
+        currency: currency,           
+        site_redirect_url: "https://aurascoreapp.vercel.app/", // <-- MATCH BACKEND VERCEL ORIGIN EXACTLY
         hash: hash,
-        mode: 'TEST',                 // REQUIRED FOR SANDBOX
+        mode: 'TEST',                 
         onComplete: async (response: any) => {
           const responseCode = String(response?.resp || "");
           if (responseCode !== "00") {
