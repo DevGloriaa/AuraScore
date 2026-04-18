@@ -25,7 +25,7 @@ type CheckoutFn = (payload: any) => void;
 const INTERSWITCH_SDK_URL = "https://newwebpay.qa.interswitchng.com/inline-checkout.js";
 const INTERSWITCH_SCRIPT_ID = "isw-inline-sdk";
 const INTERSWITCH_AMOUNT = 50000;
-const INTERSWITCH_CURRENCY = "566";
+const INTERSWITCH_CURRENCY = 566;
 // FIXED: Defaulting to Vercel to match Interswitch Origin checks
 const DEFAULT_REDIRECT_URL = "https://aurascoreapp.vercel.app/";
 
@@ -178,25 +178,25 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
       const payload: InitiatePaymentResponse = initJson?.data ?? initJson;
       const {
         txn_ref: paymentTxnRef,
-        hash,
         product_id,
-        pay_item_id,
-        currency
+        pay_item_id
       } = payload;
 
-      if (!paymentTxnRef || !hash || !product_id || !pay_item_id) {
+      if (!paymentTxnRef || !product_id || !pay_item_id) {
         throw new Error("Payment initialization returned incomplete checkout details.");
       }
 
-      // FIXED: Build the STRICT payload for Interswitch with hardcoded origin and amount
+      
       const checkoutPayload = {
         merchant_code: product_id,    
         pay_item_id: pay_item_id,
+        pay_item_name: "Aura Score Underwriting",
         txn_ref: paymentTxnRef,
-        amount: 50000,                                         // <-- FORCE EXACT INTEGER
-        currency: currency,           
-        site_redirect_url: "https://aurascoreapp.vercel.app/", // <-- MATCH BACKEND VERCEL ORIGIN EXACTLY
-        hash: hash,
+        amount: INTERSWITCH_AMOUNT,
+        currency: INTERSWITCH_CURRENCY,
+        cust_email: email || "demo@user.com",
+        cust_name: "Aura Applicant",
+        site_redirect_url: "https://aurascoreapp.vercel.app/", 
         mode: 'TEST',                 
         onComplete: async (response: any) => {
           const responseCode = String(response?.resp || "");
