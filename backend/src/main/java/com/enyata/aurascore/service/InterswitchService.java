@@ -3,32 +3,25 @@ package com.enyata.aurascore.service;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.net.SocketTimeoutException;
 import java.time.Instant;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.Base64;
-import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.concurrent.TimeoutException;
+import java.util.UUID;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.server.ResponseStatusException;
@@ -41,16 +34,19 @@ import static org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR;
 @Service
 public class InterswitchService {
 
-    private static final Logger log = LoggerFactory.getLogger(InterswitchService.class);
-    private static final ZoneId WAT_ZONE_ID = ZoneId.of("Africa/Lagos");
-    private static final DateTimeFormatter WAT_TIMESTAMP_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX");
-    private static final String BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+    private static final String DEMO_AMOUNT_KOBO = "50000";
+    private static final String WEBPAY_REDIRECT_BASE_URL = "https://newwebpay.qa.interswitchng.com/collections/w/pay";
+    private static final String SITE_REDIRECT_URL = "https://aurascoreapp.vercel.app";
+    private static final String DEMO_CURRENCY = "566";
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
 
     @Value("${ISW_MERCHANT_CODE:MX6072}")
     private String merchantCode;
+
+    @Value("${interswitch.product-id:}")
+    private String productId;
 
     @Value("${ISW_PAY_ITEM_ID:9405967}")
     private String payItemId;
@@ -67,39 +63,57 @@ public class InterswitchService {
     @Value("${interswitch.identity.api.url:https://api-marketplace-routing.k8.isw.la}")
     private String identityBaseUrl;
 
-    @Value("${interswitch.token.url:https://aurascoreapp.vercel.app/api/isw-proxy}")
+    @Value("${interswitch.token.url:https://qa.interswitchng.com/passport/oauth/token}")
     private String tokenUrl;
 
     private volatile String cachedToken;
     private volatile long tokenExpiresAtEpochSeconds;
 
-    public InterswitchService(ObjectMapper objectMapper, @Qualifier("interswitchRestTemplate") RestTemplate restTemplate) {
+    public InterswitchService(ObjectMapper objectMapper, RestTemplateBuilder restTemplateBuilder) {
         this.objectMapper = objectMapper;
-        this.restTemplate = restTemplate;
+        this.restTemplate = restTemplateBuilder
+                .requestFactory(() -> {
+                    SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+                    factory.setConnectTimeout(10_000);
+                    factory.setReadTimeout(10_000);
+                    return factory;
+                })
+                .build();
     }
 
-    public Map<String, Object> initiatePayment(String email) {
+    public String initiatePayment(String email) {
         if (email == null || email.isBlank()) {
             throw new ResponseStatusException(BAD_REQUEST, "email is required");
         }
 
-        String txnRef = "AURA-" + Instant.now().getEpochSecond();
-        String amount = "50000";
-        String currency = "566";
-        String siteRedirectUrl = "https://aurascoreapp.vercel.app";
+        String txnRef = generateTxnRef();
+        String amount = DEMO_AMOUNT_KOBO;
+        String siteRedirectUrl = SITE_REDIRECT_URL;
+        String resolvedMerchantCode = merchantCode == null ? "" : merchantCode.trim();
+        String resolvedPayItemId = payItemId == null ? "" : payItemId.trim();
+        String resolvedSecretKey = secretKey == null ? "" : secretKey.trim();
 
-        String rawString = txnRef + merchantCode + payItemId + amount + siteRedirectUrl + secretKey;
+        if (resolvedMerchantCode.isBlank() || resolvedPayItemId.isBlank() || resolvedSecretKey.isBlank()) {
+            throw new ResponseStatusException(INTERNAL_SERVER_ERROR, "Interswitch redirect configuration is incomplete");
+        }
+
+        String rawString = txnRef + resolvedMerchantCode + resolvedPayItemId + amount + siteRedirectUrl + resolvedSecretKey;
         String hash = generateSha512(rawString);
 
-        return Map.of(
-                "txnRef", txnRef,
-                "amount", amount,
-                "hash", hash,
-                "merchantCode", merchantCode,
-                "payItemId", payItemId,
-                "currency", currency,
-                "site_redirect_url", siteRedirectUrl
-        );
+        return WEBPAY_REDIRECT_BASE_URL
+                + "?merchant_code=" + resolvedMerchantCode
+                + "&pay_item_id=" + resolvedPayItemId
+                + "&txn_ref=" + txnRef
+                + "&amount=" + amount
+                + "&currency=" + DEMO_CURRENCY
+                + "&site_redirect_url=" + siteRedirectUrl
+                + "&hash=" + hash;
+    }
+
+    private String generateTxnRef() {
+        String timestamp = String.valueOf(Instant.now().toEpochMilli());
+        String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 8).toUpperCase();
+        return "AURA-" + timestamp + "-" + suffix;
     }
 
     private String generateSha512(String input) {
@@ -128,12 +142,6 @@ public class InterswitchService {
             String normalizedReference = transactionReference.trim();
             String normalizedAmount = expectedAmountKobo.trim();
 
-            // DEMO MODE: Simulate network delay for realistic UX
-            Thread.sleep(1500);
-
-            // DEMO MODE: Bypass actual Interswitch call due to WAF IP block
-            // Production code below (commented out for hackathon):
-            /*
             String url = UriComponentsBuilder.fromUriString("https://qa.interswitchng.com/collections/api/v1/gettransaction.json")
                     .queryParam("merchantcode", merchantCode.trim())
                     .queryParam("transactionreference", normalizedReference)
@@ -141,35 +149,17 @@ public class InterswitchService {
                     .build()
                     .toUriString();
 
-            HttpHeaders headers = bearerJsonHeaders(getAccessToken());
-            logOutboundRequest("GET", url, headers);
-            HttpEntity<Void> request = new HttpEntity<>(headers);
-            ResponseEntity<JsonNode> response = exchangeWithTimeout(url, HttpMethod.GET, request, JsonNode.class);
+            HttpEntity<Void> request = new HttpEntity<>(bearerJsonHeaders(getAccessToken()));
+            ResponseEntity<JsonNode> response = restTemplate.exchange(url, HttpMethod.GET, request, JsonNode.class);
             return response.getBody();
-            */
-
-            // DEMO MODE: Return mock successful payment verification response
-            String mockResponse = "{\n" +
-                    "  \"ResponseCode\": \"00\",\n" +
-                    "  \"ResponseDescription\": \"Approved\",\n" +
-                    "  \"ResponseStatus\": true,\n" +
-                    "  \"TransactionReference\": \"" + normalizedReference + "\",\n" +
-                    "  \"Amount\": " + normalizedAmount + ",\n" +
-                    "  \"PaymentReference\": \"" + normalizedReference + "\",\n" +
-                    "  \"MerchantCode\": \"" + merchantCode.trim() + "\",\n" +
-                    "  \"PaymentMethod\": \"CARD\",\n" +
-                    "  \"TransactionDate\": \"" + java.time.LocalDateTime.now() + "\",\n" +
-                    "  \"Currency\": \"566\",\n" +
-                    "  \"Status\": \"PAID\"\n" +
-                    "}";
-            return objectMapper.readTree(mockResponse);
-
-        } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-            throw new ResponseStatusException(INTERNAL_SERVER_ERROR, "Request interrupted", ex);
-        } catch (Exception ex) {
-            // Catch JSON parsing or other unexpected errors
-            throw new ResponseStatusException(INTERNAL_SERVER_ERROR, "Mock response generation failed", ex);
+        } catch (HttpClientErrorException ex) {
+            try {
+                return objectMapper.readTree(ex.getResponseBodyAsString());
+            } catch (Exception parseEx) {
+                throw new ResponseStatusException(BAD_GATEWAY, "Payment verification API failed", ex);
+            }
+        } catch (RestClientException ex) {
+            throw new ResponseStatusException(BAD_GATEWAY, "Payment verification API unavailable", ex);
         }
     }
 
@@ -188,10 +178,8 @@ public class InterswitchService {
                     .build()
                     .toUriString();
 
-            HttpHeaders headers = bearerJsonHeaders(getAccessToken());
-            logOutboundRequest("GET", url, headers);
-            HttpEntity<Void> request = new HttpEntity<>(headers);
-            ResponseEntity<String> response = exchangeWithTimeout(url, HttpMethod.GET, request, String.class);
+            HttpEntity<Void> request = new HttpEntity<>(bearerJsonHeaders(getAccessToken()));
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, request, String.class);
 
             if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null || response.getBody().isBlank()) {
                 throw new ResponseStatusException(BAD_GATEWAY, "Bank verification failed");
@@ -199,12 +187,6 @@ public class InterswitchService {
             return response.getBody();
         } catch (HttpClientErrorException ex) {
             throw mapClientError(ex, "Bank verification failed");
-        } catch (TimeoutException ex) {
-            logTimeout("verifyBankAccount", ex);
-            throw new ResponseStatusException(BAD_GATEWAY, "Bank verification API timeout", ex);
-        } catch (ResourceAccessException ex) {
-            logTimeout("verifyBankAccount", ex);
-            throw new ResponseStatusException(BAD_GATEWAY, "Bank verification API timeout/unreachable", ex);
         } catch (RestClientException ex) {
             throw new ResponseStatusException(BAD_GATEWAY, "Bank verification API unavailable", ex);
         }
@@ -218,10 +200,8 @@ public class InterswitchService {
                     "customerId", customerId,
                     "entityCode", "PBL"
             );
-            HttpHeaders headers = bearerJsonHeaders(getAccessToken());
-            logOutboundRequest("POST", url, headers);
-            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
-            ResponseEntity<JsonNode> response = postForEntityWithTimeout(url, entity, JsonNode.class);
+            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, bearerJsonHeaders(getAccessToken()));
+            ResponseEntity<JsonNode> response = restTemplate.postForEntity(url, entity, JsonNode.class);
             return response.getBody();
         } catch (HttpClientErrorException ex) {
             try {
@@ -229,12 +209,6 @@ public class InterswitchService {
             } catch (Exception parseEx) {
                 throw new ResponseStatusException(BAD_GATEWAY, "Lending eligibility API failed", ex);
             }
-        } catch (TimeoutException ex) {
-            logTimeout("checkLoanEligibility", ex);
-            throw new ResponseStatusException(BAD_GATEWAY, "Lending eligibility API timeout", ex);
-        } catch (ResourceAccessException ex) {
-            logTimeout("checkLoanEligibility", ex);
-            throw new ResponseStatusException(BAD_GATEWAY, "Lending eligibility API timeout/unreachable", ex);
         }
     }
 
@@ -248,17 +222,13 @@ public class InterswitchService {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
             headers.set("Accept", "application/json");
-            headers.set("User-Agent", BROWSER_USER_AGENT);
             headers.set("Authorization", "Basic " + base64(clientId.trim() + ":" + clientSecret.trim()));
-            headers.set("Timestamp", watTimestamp());
 
             MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
             body.add("grant_type", "client_credentials");
 
             HttpEntity<MultiValueMap<String, String>> requestEntity = new HttpEntity<>(body, headers);
-            String resolvedTokenUrl = resolveTokenUrl();
-            logOutboundRequest("POST", resolvedTokenUrl, headers);
-            ResponseEntity<String> response = postForEntityWithTimeout(resolvedTokenUrl, requestEntity, String.class);
+            ResponseEntity<String> response = restTemplate.postForEntity(resolveTokenUrl(), requestEntity, String.class);
 
             JsonNode tokenJson = objectMapper.readTree(response.getBody());
             String accessToken = tokenJson.path("access_token").asText("");
@@ -267,12 +237,6 @@ public class InterswitchService {
             cachedToken = accessToken;
             tokenExpiresAtEpochSeconds = Instant.now().getEpochSecond() + Math.max(1L, expiresIn);
             return cachedToken;
-        } catch (TimeoutException ex) {
-            logTimeout("getAccessToken", ex);
-            throw new ResponseStatusException(BAD_GATEWAY, "Interswitch Auth timeout", ex);
-        } catch (ResourceAccessException ex) {
-            logTimeout("getAccessToken", ex);
-            throw new ResponseStatusException(BAD_GATEWAY, "Interswitch Auth timeout/unreachable", ex);
         } catch (Exception ex) {
             throw new ResponseStatusException(BAD_GATEWAY, "Interswitch Auth Failed", ex);
         }
@@ -281,79 +245,9 @@ public class InterswitchService {
     private HttpHeaders bearerJsonHeaders(String token) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.set("User-Agent", BROWSER_USER_AGENT);
         headers.setBearerAuth(token);
         headers.set("TerminalID", "7000000001");
-        headers.set("Timestamp", watTimestamp());
         return headers;
-    }
-
-    private String watTimestamp() {
-        return ZonedDateTime.now(WAT_ZONE_ID).format(WAT_TIMESTAMP_FORMATTER);
-    }
-
-    private void logOutboundRequest(String method, String url, HttpHeaders headers) {
-        System.out.println("[Interswitch] Outbound Request => method=" + method + ", url=" + url);
-        System.out.println("[Interswitch] Outbound Headers => " + maskHeaders(headers));
-        log.info("[Interswitch] Outbound Request => method={}, url={}", method, url);
-        log.info("[Interswitch] Outbound Headers => {}", maskHeaders(headers));
-    }
-
-    private Map<String, String> maskHeaders(HttpHeaders headers) {
-        Map<String, String> masked = new LinkedHashMap<>();
-        headers.forEach((name, values) -> {
-            String value = String.join(",", values);
-            String lowered = name.toLowerCase();
-            boolean sensitive = lowered.contains("authorization")
-                    || lowered.contains("secret")
-                    || lowered.contains("token")
-                    || lowered.contains("key");
-            masked.put(name, sensitive ? "***MASKED***" : value);
-        });
-        return masked;
-    }
-
-    private <T> ResponseEntity<T> exchangeWithTimeout(String url, HttpMethod method, HttpEntity<?> entity, Class<T> responseType) throws TimeoutException {
-        try {
-            return restTemplate.exchange(url, method, entity, responseType);
-        } catch (ResourceAccessException ex) {
-            if (isTimeout(ex)) {
-                throw new TimeoutException(ex.getMessage());
-            }
-            throw ex;
-        }
-    }
-
-    private <T> ResponseEntity<T> postForEntityWithTimeout(String url, HttpEntity<?> entity, Class<T> responseType) throws TimeoutException {
-        try {
-            return restTemplate.postForEntity(url, entity, responseType);
-        } catch (ResourceAccessException ex) {
-            if (isTimeout(ex)) {
-                throw new TimeoutException(ex.getMessage());
-            }
-            throw ex;
-        }
-    }
-
-    private boolean isTimeout(ResourceAccessException ex) {
-        Throwable cause = ex.getMostSpecificCause();
-        if (cause instanceof SocketTimeoutException) {
-            return true;
-        }
-        String message = cause != null ? cause.getMessage() : ex.getMessage();
-        return message != null && message.toLowerCase().contains("timed out");
-    }
-
-    private void logTimeout(String operation, ResourceAccessException ex) {
-        String detail = ex.getMostSpecificCause() != null ? ex.getMostSpecificCause().getMessage() : ex.getMessage();
-        System.err.println("[Interswitch][Timeout] Operation=" + operation + " failed: " + detail);
-        log.error("[Interswitch][Timeout] Operation={} failed: {}", operation, detail, ex);
-    }
-
-    private void logTimeout(String operation, TimeoutException ex) {
-        String detail = ex.getMessage() != null ? ex.getMessage() : "Operation timed out";
-        System.err.println("[Interswitch][Timeout] Operation=" + operation + " timed out: " + detail);
-        log.error("[Interswitch][Timeout] Operation={} timed out: {}", operation, detail, ex);
     }
 
     private ResponseStatusException mapClientError(HttpClientErrorException ex, String message) {
@@ -375,6 +269,7 @@ public class InterswitchService {
 
     private String resolveTokenUrl() {
         if (tokenUrl != null && !tokenUrl.isBlank()) return tokenUrl.trim();
-        return "https://aurascoreapp.vercel.app/api/isw-proxy";
+        return "https://qa.interswitchng.com/passport/oauth/token";
     }
+
 }
