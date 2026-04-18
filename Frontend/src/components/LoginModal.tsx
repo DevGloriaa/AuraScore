@@ -522,7 +522,7 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
                     </div>
                   ) : (
                     <div className="pt-8 flex flex-col sm:flex-row gap-4 justify-center">
-                      <button onClick={handleGenerate} disabled={!monoCode || !walletAddress || !txnRef} 
+                      <button onClick={handleGenerate} disabled={isLoading} 
                               className="flex items-center justify-center px-10 py-5 bg-gradient-to-r from-red-600 to-red-800 hover:from-red-500 hover:to-red-700 disabled:opacity-50 rounded-xl font-bold text-lg shadow-[0_0_40px_rgba(220,38,38,0.4)] transition-all">
                         Generate Risk Profile
                       </button>
