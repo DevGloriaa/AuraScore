@@ -39,8 +39,8 @@ public class AuraScoreController {
     }
 
     @PostMapping("/initiate-payment")
-    public ResponseEntity<Map<String, String>> initiatePayment(@Valid @RequestBody InitiateRequest request) {
-        return ResponseEntity.ok(Map.of("paymentUrl", interswitchService.initiatePayment(request.email())));
+    public ResponseEntity<Map<String, Object>> initiatePayment(@Valid @RequestBody InitiateRequest request) {
+        return ResponseEntity.ok(interswitchService.initiatePayment(request.email()));
     }
 
     @PostMapping("/verify-payment")
@@ -58,7 +58,25 @@ public class AuraScoreController {
     @PostMapping("/generate")
     public ResponseEntity<?> generateScore(@Valid @RequestBody GenerateScoreRequest request) {
         try {
-            String accountId = monoService.exchangeToken(request.code());
+            String accountId;
+            try {
+                accountId = monoService.exchangeToken(request.code());
+            } catch (Exception monoExchangeEx) {
+                ScoreRecord existingRecord = scoreRepository
+                        .findTopByCustomerReferenceOrderByCreatedAtDesc(request.customerReference())
+                        .orElse(null);
+                if (existingRecord != null) {
+                    Map<String, Object> fallbackResponse = new LinkedHashMap<>();
+                    fallbackResponse.put("customerReference", request.customerReference());
+                    fallbackResponse.put("fingerprint", existingRecord.getId());
+                    fallbackResponse.put("analysis", existingRecord.getAiAnalysis());
+                    fallbackResponse.put("cached", true);
+                    fallbackResponse.put("recoveredFromMonoCodeReuse", true);
+                    return ResponseEntity.ok(fallbackResponse);
+                }
+                throw monoExchangeEx;
+            }
+
             JsonNode financialData = monoService.getTransactions(accountId);
             String financialFingerprint = sha256(financialData.toString());
 

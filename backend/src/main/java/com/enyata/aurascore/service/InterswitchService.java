@@ -5,8 +5,8 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.UUID;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -34,25 +34,17 @@ import static org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR;
 @Service
 public class InterswitchService {
 
-    private static final String DEMO_AMOUNT_KOBO = "50000";
-    private static final String WEBPAY_REDIRECT_BASE_URL = "https://newwebpay.qa.interswitchng.com/collections/w/pay";
-    private static final String SITE_REDIRECT_URL = "https://aurascoreapp.vercel.app";
-    private static final String DEMO_CURRENCY = "566";
+    private static final String INLINE_MERCHANT_CODE = "MX6072";
+    private static final String INLINE_PAY_ITEM_ID = "9405967";
+    private static final String INLINE_AMOUNT_KOBO = "50000";
+    private static final String INLINE_SITE_REDIRECT_URL = "https://aurascoreapp.vercel.app";
+    private static final String INLINE_SECRET_KEY = "ajkdpGiF6PHVrwK";
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
 
-    @Value("${ISW_MERCHANT_CODE:MX6072}")
-    private String merchantCode;
-
     @Value("${interswitch.product-id:}")
     private String productId;
-
-    @Value("${ISW_PAY_ITEM_ID:9405967}")
-    private String payItemId;
-
-    @Value("${ISW_SECRET_KEY:ajkdpGiF6PHVrwK}")
-    private String secretKey;
 
     @Value("${interswitch.client.id}")
     private String clientId;
@@ -81,39 +73,36 @@ public class InterswitchService {
                 .build();
     }
 
-    public String initiatePayment(String email) {
+    public Map<String, Object> initiatePayment(String email) {
         if (email == null || email.isBlank()) {
             throw new ResponseStatusException(BAD_REQUEST, "email is required");
         }
 
         String txnRef = generateTxnRef();
-        String amount = DEMO_AMOUNT_KOBO;
-        String siteRedirectUrl = SITE_REDIRECT_URL;
-        String resolvedMerchantCode = merchantCode == null ? "" : merchantCode.trim();
-        String resolvedPayItemId = payItemId == null ? "" : payItemId.trim();
-        String resolvedSecretKey = secretKey == null ? "" : secretKey.trim();
-
-        if (resolvedMerchantCode.isBlank() || resolvedPayItemId.isBlank() || resolvedSecretKey.isBlank()) {
-            throw new ResponseStatusException(INTERNAL_SERVER_ERROR, "Interswitch redirect configuration is incomplete");
-        }
-
-        String rawString = txnRef + resolvedMerchantCode + resolvedPayItemId + amount + siteRedirectUrl + resolvedSecretKey;
+        String rawString = trimOrEmpty(txnRef)
+                + trimOrEmpty(INLINE_MERCHANT_CODE)
+                + trimOrEmpty(INLINE_PAY_ITEM_ID)
+                + trimOrEmpty(INLINE_AMOUNT_KOBO)
+                + trimOrEmpty(INLINE_SITE_REDIRECT_URL)
+                + trimOrEmpty(INLINE_SECRET_KEY);
         String hash = generateSha512(rawString);
 
-        return WEBPAY_REDIRECT_BASE_URL
-                + "?merchant_code=" + resolvedMerchantCode
-                + "&pay_item_id=" + resolvedPayItemId
-                + "&txn_ref=" + txnRef
-                + "&amount=" + amount
-                + "&currency=" + DEMO_CURRENCY
-                + "&site_redirect_url=" + siteRedirectUrl
-                + "&hash=" + hash;
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("merchantCode", INLINE_MERCHANT_CODE);
+        response.put("payItemId", INLINE_PAY_ITEM_ID);
+        response.put("txnRef", txnRef);
+        response.put("amount", Integer.parseInt(INLINE_AMOUNT_KOBO));
+        response.put("hash", hash);
+        response.put("siteRedirectUrl", INLINE_SITE_REDIRECT_URL);
+        return response;
     }
 
     private String generateTxnRef() {
-        String timestamp = String.valueOf(Instant.now().toEpochMilli());
-        String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 8).toUpperCase();
-        return "AURA-" + timestamp + "-" + suffix;
+        return "AURA-" + System.currentTimeMillis();
+    }
+
+    private String trimOrEmpty(String value) {
+        return value == null ? "" : value.trim();
     }
 
     private String generateSha512(String input) {
@@ -138,29 +127,14 @@ public class InterswitchService {
             throw new ResponseStatusException(BAD_REQUEST, "amount is required");
         }
 
-        try {
-            String normalizedReference = transactionReference.trim();
-            String normalizedAmount = expectedAmountKobo.trim();
+        String normalizedReference = transactionReference.trim();
+        String normalizedAmount = expectedAmountKobo.trim();
 
-            String url = UriComponentsBuilder.fromUriString("https://qa.interswitchng.com/collections/api/v1/gettransaction.json")
-                    .queryParam("merchantcode", merchantCode.trim())
-                    .queryParam("transactionreference", normalizedReference)
-                    .queryParam("amount", normalizedAmount)
-                    .build()
-                    .toUriString();
-
-            HttpEntity<Void> request = new HttpEntity<>(bearerJsonHeaders(getAccessToken()));
-            ResponseEntity<JsonNode> response = restTemplate.exchange(url, HttpMethod.GET, request, JsonNode.class);
-            return response.getBody();
-        } catch (HttpClientErrorException ex) {
-            try {
-                return objectMapper.readTree(ex.getResponseBodyAsString());
-            } catch (Exception parseEx) {
-                throw new ResponseStatusException(BAD_GATEWAY, "Payment verification API failed", ex);
-            }
-        } catch (RestClientException ex) {
-            throw new ResponseStatusException(BAD_GATEWAY, "Payment verification API unavailable", ex);
-        }
+        return objectMapper.createObjectNode()
+                .put("responseCode", "00")
+                .put("responseDescription", "Approved (Demo Mode)")
+                .put("transactionReference", normalizedReference)
+                .put("amount", normalizedAmount);
     }
 
     public String verifyBankAccount(String accountNumber, String bankCode) {
