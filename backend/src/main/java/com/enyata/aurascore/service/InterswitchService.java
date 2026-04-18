@@ -86,7 +86,7 @@ public class InterswitchService {
         String txnRef = "AURA-" + Instant.now().getEpochSecond();
         String amount = "50000";
         String currency = "566";
-        String siteRedirectUrl = "https://aurascoreapp.vercel.app/";
+        String siteRedirectUrl = "https://aurascoreapp.vercel.app";
 
         String rawString = txnRef + merchantCode + payItemId + amount + siteRedirectUrl + secretKey;
         String hash = generateSha512(rawString);
