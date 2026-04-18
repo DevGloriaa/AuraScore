@@ -41,13 +41,24 @@ public class AuraScoreController {
         this.interswitchService = interswitchService;
         this.scoreRepository = scoreRepository;
     }
-
     @PostMapping("/initiate-payment")
-    public ResponseEntity<?> initiatePayment(@Valid @RequestBody InitiateRequest request) {
-        Map<String, Object> result = interswitchService.initiatePayment(request.email());
-        return ResponseEntity.ok(result);
-    }
+    public ResponseEntity<Map<String, String>> initiatePayment(@Valid @RequestBody InitiateRequest request) {
+        // 1. Get the raw Map from the service
+        Map<String, Object> rawResponse = interswitchService.initiatePayment(request.email());
 
+        // 2. Force the exact snake_case JSON keys the frontend is begging for
+        Map<String, String> safeResponse = new LinkedHashMap<>();
+        safeResponse.put("txn_ref", String.valueOf(rawResponse.get("txnRef")));
+        safeResponse.put("hash", String.valueOf(rawResponse.get("hash")));
+        safeResponse.put("amount", String.valueOf(rawResponse.get("amount")));
+        safeResponse.put("site_redirect_url", String.valueOf(rawResponse.get("site_redirect_url")));
+        safeResponse.put("product_id", String.valueOf(rawResponse.get("merchantCode"))); // Mapping merchantCode to product_id
+        safeResponse.put("pay_item_id", String.valueOf(rawResponse.get("payItemId")));
+        safeResponse.put("currency", String.valueOf(rawResponse.get("currency")));
+        safeResponse.put("email", request.email());
+
+        return ResponseEntity.ok(safeResponse);
+    }
     @PostMapping("/verify-payment")
     public ResponseEntity<?> verifyPayment(@Valid @RequestBody VerifyPaymentRequest request) {
         String expectedAmountKobo = "50000";
